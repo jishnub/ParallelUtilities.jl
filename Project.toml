@@ -1,0 +1,8 @@
+name = "ParallelUtilities"
+uuid = "fad6cfc8-4f83-11e9-06cc-151124046ad0"
+authors = ["Jishnu Bhattacharya <jishnuonline@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
+Reexport = "189a3867-3050-52da-a836-e630ba90ab69"
