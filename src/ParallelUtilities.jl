@@ -21,9 +21,6 @@ end
 function split_across_processors(arr₁,num_procs=nworkers(),proc_id=worker_rank())
 
 	@assert(proc_id<=num_procs,"processor rank has to be less than number of workers engaged")
-	if num_procs == 1
-		return arr₁
-	end
 
 	num_tasks = length(arr₁);
 
@@ -32,13 +29,12 @@ function split_across_processors(arr₁,num_procs=nworkers(),proc_id=worker_rank
 	num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
 	task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover+1,proc_id);
 
-	return Iterators.take(Iterators.drop(arr₁,task_start-1),num_tasks_on_proc)
+	Iterators.take(Iterators.drop(arr₁,task_start-1),num_tasks_on_proc)
 end
 
 function split_product_across_processors(arr₁,arr₂,num_procs::Integer=nworkers(),proc_id::Integer=worker_rank())
-
 	# arr₁ will change faster
-	return split_across_processors(Iterators.product(arr₁,arr₂),num_procs,proc_id)
+	split_across_processors(Iterators.product(arr₁,arr₂),num_procs,proc_id)
 end
 
 function split_product_across_processors(arrs_tuple,num_procs::Integer=nworkers(),proc_id::Integer=worker_rank())
