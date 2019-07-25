@@ -172,48 +172,27 @@ function pmapsum(f::Function,iterable,args...;kwargs...)
 	num_workers = length(procs_used)
 	hostnames = get_hostnames(procs_used)
 	nodes = get_nodes(hostnames)
-	np_nodes = get_nprocs_node(hostnames)
 	pid_rank0_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes]
-
-	function apply_and_stash(f,iterable,args...;channel,kwargs...)
-		result = f(iterable,args...;kwargs...)
-		put!(channel,result)
-	end
 
 	# Worker at which final reduction takes place
 	p_final = first(pid_rank0_on_node)
-	sum_channel = RemoteChannel(()->Channel{Any}(10),p_final)
-	master_channel_nodes = Dict(node=>RemoteChannel(()->Channel{Any}(10),p)
-							for (node,p) in zip(nodes,pid_rank0_on_node))
-	worker_channel_nodes = Dict(node=>RemoteChannel(()->Channel{Any}(10),p)
-							for (node,p) in zip(nodes,pid_rank0_on_node))
 
-	# Run the function on each processor
+	sum_channel = RemoteChannel(()->Channel{Any}(100),p_final)
+	result = 0
+
+	# Run the function on each processor and compute the sum at each node
 	@sync for (rank,p) in enumerate(procs_used)
 		@async begin
 			iterable_on_proc = split_across_processors(iterable,num_workers,rank)
-			node = hostnames[rank]
-			master_channel_node = master_channel_nodes[node]
-			worker_channel_node = worker_channel_nodes[node]
-			np_node = np_nodes[node]
-			if p in pid_rank0_on_node
-				@spawnat p apply_and_stash(f,iterable_on_proc,args...;kwargs...,
-					channel=master_channel_node)
-				@spawnat p sum_channel(worker_channel_node,master_channel_node,np_node)
-			else
-				@spawnat p apply_and_stash(f,iterable_on_proc,args...;kwargs...,
-					channel=worker_channel_node)
+			r = @spawnat p f(iterable_on_proc,args...;kwargs...)
+			@spawnat p put!(sum_channel,fetch(r))
+			if p==p_final
+				result = @fetchfrom p_final sum(take!(sum_channel) for i=1:num_workers)			
 			end
-		end
-		@async begin
-		    @spawnat p_final sum_channel(master_channel_nodes,sum_channel,length(nodes))
 		end
 	end
 
-	finalize.(values(worker_channel_nodes))
-	finalize.(values(master_channel_nodes))
-
-	take!(sum_channel)
+	return result
 end
 
 function pmap_onebatch_per_worker(f::Function,iterable,args...;num_workers=nothing,kwargs...)
@@ -232,24 +211,6 @@ function pmap_onebatch_per_worker(f::Function,iterable,args...;num_workers=nothi
 		end
 	end
 	return futures
-end
-
-function spawnf(f::Function,iterable)
-
-	futures = Vector{Future}(undef,nworkers())
-	@sync for (rank,p) in enumerate(workers())
-		futures[rank] = @spawnat p f(iterable)
-	end
-	return futures
-end
-
-function sum_channel(worker_channel,master_channel,np_node)
-	@sync for i in 1:np_node-1
-		@async begin
-			s = take!(worker_channel) + take!(master_channel)
-			put!(master_channel,s)
-		end
-	end
 end
 
 #############################################################################
