@@ -162,7 +162,7 @@ end
 
 get_nprocs_node(procs_used::Vector{<:Integer}=workers()) = get_nprocs_node(get_hostnames(procs_used))
 
-function pmapsum(f::Function,iterable,args...;kwargs...) where {T}
+function pmapsum(f::Function,iterable,args...;kwargs...)
 
 	procs_used = workers_active(iterable)
 	num_workers = length(procs_used)
@@ -182,9 +182,7 @@ function pmapsum(f::Function,iterable,args...;kwargs...) where {T}
 	p = first(pid_rank0_on_node)
 
 	# Final sum across all nodes
-	S = @fetchfrom p sum(fetch(f) for f in node_sum_futures)
-
-	return S
+	@fetchfrom p sum(fetch(f) for f in node_sum_futures)
 end
 
 function pmap_onebatch_per_worker(f::Function,iterable,args...;num_workers=nothing,kwargs...)
