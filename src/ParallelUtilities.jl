@@ -3,7 +3,12 @@ module ParallelUtilities
 using Reexport
 @reexport using Distributed
 
-worker_rank() = myid()-minimum(workers())+1
+function worker_rank()
+	if nworkers()==1
+		return 1
+	end
+	myid()-minimum(workers())+1
+end
 
 function split_across_processors(num_tasks::Integer,num_procs=nworkers(),proc_id=worker_rank())
 	if num_procs == 1
