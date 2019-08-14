@@ -186,6 +186,29 @@ function extrema_from_split_array(iterable)
 	collect(zip(min_vals,max_vals))
 end
 
+function moderanges_common_lastarray(iterable)
+	m = extrema_from_split_array(iterable)
+	lastvar_min = last(m)[1]
+	lastvar_max = last(m)[2]
+
+	val_first = first(iterable)
+	min_vals = collect(val_first[1:end-1])
+	max_vals = copy(min_vals)
+
+	for val in iterable
+		for (ind,vi) in enumerate(val[1:end-1])
+			if val[end]==lastvar_min
+				min_vals[ind] = min(min_vals[ind],vi)
+			end
+			if val[end]==lastvar_max
+				max_vals[ind] = max(max_vals[ind],vi)
+			end
+		end
+	end
+
+	[(m,lastvar_min) for m in min_vals],[(m,lastvar_max) for m in max_vals]
+end
+
 function get_hostnames(procs_used=workers())
 	hostnames = Vector{String}(undef,length(procs_used))
 	@sync for (ind,p) in enumerate(procs_used)
@@ -258,7 +281,7 @@ get_processor_id_from_split_array,
 procid_allmodes,mode_index_in_file,
 get_processor_range_from_split_array,workers_active,worker_rank,
 get_index_in_split_array,procid_and_mode_index,extrema_from_split_array,
-pmapsum,sum_at_node,pmap_onebatch_per_worker,
+pmapsum,sum_at_node,pmap_onebatch_per_worker,moderanges_common_lastarray,
 get_nodes,get_hostnames,get_nprocs_node
 
 end # module
