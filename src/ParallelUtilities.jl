@@ -172,16 +172,22 @@ workers_active(arrs...) = workers_active(Iterators.product(arrs...))
 
 nworkers_active(args...) = length(workers_active(args...))
 
-function minmax_from_split_array(iterable)
-	arr₁_min,arr₂_min = first(iterable)
-	arr₁_max,arr₂_max = arr₁_min,arr₂_min
-	for (arr₁_value,arr₂_value) in iterable
-		arr₁_min = min(arr₁_min,arr₁_value)
-		arr₁_max = max(arr₁_max,arr₁_value)
-		arr₂_min = min(arr₂_min,arr₂_value)
-		arr₂_max = max(arr₂_max,arr₂_value)
+function extrema_from_split_array(iterable)
+	val_first = first(iterable)
+	N = length(val_first)
+	T = reduce(promote_type,typeof.(val_first))
+	min_vals = Vector{T}(undef,N)
+	min_vals .= val_first
+	max_vals = Vector{T}(undef,N)
+	max_vals .= val_first
+
+	for val in iterable
+		for (ind,vi) in enumerate(val)
+			min_vals[ind] = min(min_vals[ind],vi)
+			max_vals[ind] = max(max_vals[ind],vi)
+		end
 	end
-	return (arr₁_min=arr₁_min,arr₁_max=arr₁_max,arr₂_min=arr₂_min,arr₂_max=arr₂_max)
+	collect(zip(min_vals,max_vals))
 end
 
 function get_hostnames(procs_used=workers())
@@ -255,8 +261,8 @@ export split_across_processors,split_product_across_processors,
 get_processor_id_from_split_array,
 procid_allmodes,mode_index_in_file,
 get_processor_range_from_split_array,workers_active,worker_rank,
-get_index_in_split_array,procid_and_mode_index,minmax_from_split_array,
-node_remotechannels,pmapsum,sum_at_node,pmap_onebatch_per_worker,
+get_index_in_split_array,procid_and_mode_index,extrema_from_split_array,
+pmapsum,sum_at_node,pmap_onebatch_per_worker,
 get_nodes,get_hostnames,get_nprocs_node
 
 end # module
