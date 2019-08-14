@@ -37,7 +37,8 @@ function split_across_processors(arr₁,num_procs=nworkers(),proc_id=worker_rank
 	Iterators.take(Iterators.drop(arr₁,task_start-1),num_tasks_on_proc)
 end
 
-function split_product_across_processors(arr₁,arr₂,num_procs::Integer=nworkers(),proc_id::Integer=worker_rank())
+function split_product_across_processors(arr₁::AbstractVector,arr₂::AbstractVector,
+	num_procs::Integer=nworkers(),proc_id::Integer=worker_rank())
 	# arr₁ will change faster
 	split_across_processors(Iterators.product(arr₁,arr₂),num_procs,proc_id)
 end
@@ -46,7 +47,8 @@ function split_product_across_processors(arrs_tuple,num_procs::Integer=nworkers(
 	return split_across_processors(Iterators.product(arrs_tuple...),num_procs,proc_id)
 end
 
-function get_processor_id_from_split_array(arr₁,arr₂,(arr₁_value,arr₂_value)::Tuple,num_procs)
+function get_processor_id_from_split_array(arr₁::AbstractVector,arr₂::AbstractVector,
+	(arr₁_value,arr₂_value)::Tuple,num_procs)
 	# Find the closest match in arrays
 
 	if (arr₁_value ∉ arr₁) || (arr₂_value ∉ arr₂)
@@ -87,43 +89,76 @@ function get_processor_id_from_split_array(arr₁,arr₂,(arr₁_value,arr₂_va
 	return proc_id
 end
 
-function get_processor_range_from_split_array(arr₁,arr₂,modes_on_proc,num_procs)
+function get_processor_id_from_split_array(iter,val::Tuple,num_procs)
+	for proc_id in 1:num_procs
+		tasks_on_proc = split_across_processors(iter,num_procs,proc_id)
+		if val ∈ tasks_on_proc
+			return proc_id
+		end
+	end
+	return 0
+end
+
+function get_processor_range_from_split_array(arr₁::AbstractVector,arr₂::AbstractVector,
+	iter_section,num_procs::Integer)
 	
-	if isempty(modes_on_proc)
+	if isempty(iter_section)
 		return 0:-1 # empty range
 	end
 
-	tasks_arr = collect(modes_on_proc)
+	tasks_arr = collect(iter_section)
 	proc_id_start = get_processor_id_from_split_array(arr₁,arr₂,first(tasks_arr),num_procs)
 	proc_id_end = get_processor_id_from_split_array(arr₁,arr₂,last(tasks_arr),num_procs)
 	return proc_id_start:proc_id_end
 end
 
-function get_index_in_split_array(modes_on_proc,(arr₁_value,arr₂_value))
-	if isnothing(modes_on_proc)
+function get_processor_range_from_split_array(iter,iter_section,num_procs::Integer)
+	
+	if isempty(iter_section)
+		return 0:-1 # empty range
+	end
+
+	tasks_arr = collect(iter_section)
+	proc_id_start = get_processor_id_from_split_array(iter,first(tasks_arr),num_procs)
+	proc_id_end = get_processor_id_from_split_array(iter,last(tasks_arr),num_procs)
+	return proc_id_start:proc_id_end
+end
+
+function get_index_in_split_array(iter_section,val::Tuple)
+	if isnothing(iter_section)
 		return nothing
 	end
-	for (ind,(t1,t2)) in enumerate(modes_on_proc)
-		if (t1==arr₁_value) && (t2 == arr₂_value)
+	for (ind,val_ind) in enumerate(iter_section)
+		if val_ind == val
 			return ind
 		end
 	end
 	nothing
 end
 
-function procid_and_mode_index(arr₁,arr₂,(arr₁_value,arr₂_value),num_procs)
+function procid_and_mode_index(arr₁::AbstractVector,arr₂::AbstractVector,
+	(arr₁_value,arr₂_value)::Tuple,num_procs::Integer)
 	proc_id_mode = get_processor_id_from_split_array(arr₁,arr₂,(arr₁_value,arr₂_value),num_procs)
 	modes_in_procid_file = split_product_across_processors(arr₁,arr₂,num_procs,proc_id_mode)
 	mode_index = get_index_in_split_array(modes_in_procid_file,(arr₁_value,arr₂_value))
 	return proc_id_mode,mode_index
 end
 
-function mode_index_in_file(arr₁,arr₂,(arr₁_value,arr₂_value),num_procs,proc_id_mode)
+function procid_and_mode_index(iter,val::Tuple,num_procs::Integer)
+	proc_id_mode = get_processor_id_from_split_array(iter,val,num_procs)
+	modes_in_procid_file = split_across_processors(iter,num_procs,proc_id_mode)
+	mode_index = get_index_in_split_array(modes_in_procid_file,val)
+	return proc_id_mode,mode_index
+end
+
+function mode_index_in_file(arr₁::AbstractVector,arr₂::AbstractVector,
+	(arr₁_value,arr₂_value)::Tuple,num_procs::Integer,proc_id_mode::Integer)
 	modes_in_procid_file = split_product_across_processors(arr₁,arr₂,num_procs,proc_id_mode)
 	mode_index = get_index_in_split_array(modes_in_procid_file,(arr₁_value,arr₂_value))
 end
 
-function procid_allmodes(arr₁,arr₂,iter,num_procs=nworkers_active(arr₁,arr₂))
+function procid_allmodes(arr₁::AbstractVector,arr₂::AbstractVector,
+	iter,num_procs=nworkers_active(arr₁,arr₂))
 	procid = zeros(Int64,length(iter))
 	for (ind,mode) in enumerate(iter)
 		procid[ind] = get_processor_id_from_split_array(arr₁,arr₂,mode,num_procs)
@@ -133,7 +168,7 @@ end
 
 workers_active(arr) = workers()[1:min(length(arr),nworkers())]
 
-workers_active(arr₁,arr₂) = workers_active(Iterators.product(arr₁,arr₂))
+workers_active(arrs...) = workers_active(Iterators.product(arrs...))
 
 nworkers_active(args...) = length(workers_active(args...))
 
