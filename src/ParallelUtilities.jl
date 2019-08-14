@@ -174,12 +174,8 @@ nworkers_active(args...) = length(workers_active(args...))
 
 function extrema_from_split_array(iterable)
 	val_first = first(iterable)
-	N = length(val_first)
-	T = reduce(promote_type,typeof.(val_first))
-	min_vals = Vector{T}(undef,N)
-	min_vals .= val_first
-	max_vals = Vector{T}(undef,N)
-	max_vals .= val_first
+	min_vals = collect(val_first)
+	max_vals = copy(min_vals)
 
 	for val in iterable
 		for (ind,vi) in enumerate(val)
