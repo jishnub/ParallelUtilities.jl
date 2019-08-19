@@ -237,24 +237,15 @@ get_nprocs_node(procs_used::Vector{<:Integer}=workers()) = get_nprocs_node(get_h
 function pmapsum(f::Function,iterable,args...;kwargs...)
 
 	procs_used = workers_active(iterable)
-	num_workers = length(procs_used)
-	hostnames = get_hostnames(procs_used)
-	nodes = get_nodes(hostnames)
-	pid_rank0_on_node = [procs_used[findfirst(x->x==node,hostnames)] for node in nodes]
 
 	futures = pmap_onebatch_per_worker(f,iterable,args...;kwargs...)
 
-	# Intermediate sum over processors on the same node
-	node_sum_futures = Vector{Future}(undef,length(pid_rank0_on_node))
-	@sync for (ind,p) in enumerate(pid_rank0_on_node)
-		@async node_sum_futures[ind] = @spawnat p sum_at_node(futures,hostnames)
+	# Final sum across all nodes 
+	# sum(fetch(f) for f in futures)
+	@fetchfrom first(procs_used) @distributed (+) for f in futures
+		fetch(f)
 	end
 
-	# Worker at which final reduction takes place
-	p = first(pid_rank0_on_node)
-
-	# Final sum across all nodes
-	@fetchfrom p sum(fetch(f) for f in node_sum_futures)
 end
 
 function pmap_onebatch_per_worker(f::Function,iterable,args...;num_workers=nothing,kwargs...)
