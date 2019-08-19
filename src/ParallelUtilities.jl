@@ -240,18 +240,23 @@ function pmapsum(f::Function,iterable,args...;kwargs...)
 
 	futures = pmap_onebatch_per_worker(f,iterable,args...;kwargs...)
 
-	# Final sum across all nodes 
-	# sum(fetch(f) for f in futures)
-	@fetchfrom first(procs_used) @distributed (+) for f in futures
-		fetch(f)
+	# final sum to be run on the first worker
+	function final_sum(futures)
+		s = fetch(first(futures))
+		@sync for f in futures[2:end]
+			@async s += fetch(f)
+		end
+		return s
 	end
 
+	@fetchfrom first(procs_used) final_sum(futures)
 end
 
-function pmap_onebatch_per_worker(f::Function,iterable,args...;num_workers=nothing,kwargs...)
+function pmap_onebatch_per_worker(f::Function,iterable,args...;kwargs...)
 
 	procs_used = workers_active(iterable)
-	if !isnothing(num_workers) && num_workers<=length(procs_used)
+	num_workers = get(kwargs,:num_workers,length(procs_used))
+	if num_workers<length(procs_used)
 		procs_used = procs_used[1:num_workers]
 	end
 	num_workers = length(procs_used)
