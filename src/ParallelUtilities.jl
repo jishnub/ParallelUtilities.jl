@@ -1,13 +1,13 @@
 module ParallelUtilities
 
-using Reexport
+using Reexport,TimerOutputs
 @reexport using Distributed
 
 export split_across_processors,split_product_across_processors,
 get_processor_id_from_split_array,procid_allmodes,mode_index_in_file,
 get_processor_range_from_split_array,workers_active,nworkers_active,worker_rank,
 get_index_in_split_array,procid_and_mode_index,extrema_from_split_array,
-pmapsum,sum_at_node,pmap_onebatch_per_worker,moderanges_common_lastarray,
+pmapsum,pmapsum_timed,sum_at_node,pmap_onebatch_per_worker,moderanges_common_lastarray,
 get_nodes,get_hostnames,get_nprocs_node
 
 function worker_rank()
@@ -250,8 +250,30 @@ function pmapsum(f::Function,iterable,args...;kwargs...)
 		end
 		return s
 	end
-
 	@fetchfrom first(procs_used) final_sum(futures)
+end
+
+function pmapsum_timed(f::Function,iterable,args...;kwargs...)
+
+	procs_used = workers_active(iterable)
+
+	futures = pmap_onebatch_per_worker(f,iterable,args...;kwargs...)
+
+	timer = TimerOutput()
+	function final_sum(futures,timer)
+		@timeit timer "fetch" s = fetch(first(futures))
+		@sync for f in futures[2:end]
+			@async begin
+				@timeit timer "fetch" t_i = fetch(f)
+				s += t_i
+			end
+		end
+		return s,timer
+	end
+
+	s,timer = @fetchfrom first(procs_used) final_sum(futures,timer)
+	println(timer)
+	return s
 end
 
 function pmap_onebatch_per_worker(f::Function,iterable,args...;kwargs...)
