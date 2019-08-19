@@ -3,6 +3,13 @@ module ParallelUtilities
 using Reexport
 @reexport using Distributed
 
+export split_across_processors,split_product_across_processors,
+get_processor_id_from_split_array,procid_allmodes,mode_index_in_file,
+get_processor_range_from_split_array,workers_active,nworkers_active,worker_rank,
+get_index_in_split_array,procid_and_mode_index,extrema_from_split_array,
+pmapsum,sum_at_node,pmap_onebatch_per_worker,moderanges_common_lastarray,
+get_nodes,get_hostnames,get_nprocs_node
+
 function worker_rank()
 	if nworkers()==1
 		return 1
@@ -273,15 +280,5 @@ function sum_at_node(futures::Vector{Future},hostnames)
 	futures_on_myhost = futures[hostnames .== myhost]
 	sum(fetch(f) for f in futures_on_myhost)
 end
-
-#############################################################################
-
-export split_across_processors,split_product_across_processors,
-get_processor_id_from_split_array,
-procid_allmodes,mode_index_in_file,
-get_processor_range_from_split_array,workers_active,worker_rank,
-get_index_in_split_array,procid_and_mode_index,extrema_from_split_array,
-pmapsum,sum_at_node,pmap_onebatch_per_worker,moderanges_common_lastarray,
-get_nodes,get_hostnames,get_nprocs_node
 
 end # module
