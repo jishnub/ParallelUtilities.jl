@@ -240,11 +240,13 @@ function pmapsum(f::Function,iterable,args...;kwargs...)
 
 	futures = pmap_onebatch_per_worker(f,iterable,args...;kwargs...)
 
-	# final sum to be run on the first worker
 	function final_sum(futures)
 		s = fetch(first(futures))
 		@sync for f in futures[2:end]
-			@async s += fetch(f)
+			@async begin
+				t_i = fetch(f)
+				s += t_i
+			end
 		end
 		return s
 	end
