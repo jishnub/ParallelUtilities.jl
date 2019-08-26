@@ -244,8 +244,7 @@ function pmapsum(f::Function,iterable,args...;kwargs...)
 		s = fetch(first(futures))
 		@sync for f in futures[2:end]
 			@async begin
-				t_i = fetch(f)
-				s += t_i
+				s += fetch(f)
 			end
 		end
 		return s
@@ -264,8 +263,7 @@ function pmapsum_timed(f::Function,iterable,args...;kwargs...)
 		@timeit timer "fetch" s = fetch(first(futures))
 		@sync for f in futures[2:end]
 			@async begin
-				@timeit timer "fetch" t_i = fetch(f)
-				s += t_i
+				@timeit timer "fetch" s += fetch(f)
 			end
 		end
 		return s,timer
