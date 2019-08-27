@@ -18,30 +18,30 @@ function worker_rank()
 end
 
 function split_across_processors(num_tasks::Integer,num_procs=nworkers(),proc_id=worker_rank())
-	if num_procs == 1
-		return num_tasks
-	end
+    if num_procs == 1
+        return num_tasks
+    end
 
-	num_tasks_per_process,num_tasks_leftover = div(num_tasks,num_procs),mod(num_tasks,num_procs)
+    num_tasks_per_process,num_tasks_leftover = div(num_tasks,num_procs),mod(num_tasks,num_procs)
 
-	num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
-	task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover+1,proc_id);
+    num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
+    task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover+1,proc_id);
 
-	return task_start:(task_start+num_tasks_on_proc-1)
+    return task_start:(task_start+num_tasks_on_proc-1)
 end
 
 function split_across_processors(arr₁,num_procs=nworkers(),proc_id=worker_rank())
 
-	@assert(proc_id<=num_procs,"processor rank has to be less than number of workers engaged")
+    @assert(proc_id<=num_procs,"processor rank has to be less than number of workers engaged")
 
-	num_tasks = length(arr₁);
+    num_tasks = length(arr₁);
 
-	num_tasks_per_process,num_tasks_leftover = div(num_tasks,num_procs),mod(num_tasks,num_procs)
+    num_tasks_per_process,num_tasks_leftover = div(num_tasks,num_procs),mod(num_tasks,num_procs)
 
-	num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
-	task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover+1,proc_id);
+    num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
+    task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover+1,proc_id);
 
-	Iterators.take(Iterators.drop(arr₁,task_start-1),num_tasks_on_proc)
+    Iterators.take(Iterators.drop(arr₁,task_start-1),num_tasks_on_proc)
 end
 
 function split_product_across_processors(arr₁::AbstractVector,arr₂::AbstractVector,
@@ -152,6 +152,7 @@ function procid_and_mode_index(arr₁::AbstractVector,arr₂::AbstractVector,
 end
 
 function procid_and_mode_index(iter,val::Tuple,num_procs::Integer)
+
 	proc_id_mode = get_processor_id_from_split_array(iter,val,num_procs)
 	modes_in_procid_file = split_across_processors(iter,num_procs,proc_id_mode)
 	mode_index = get_index_in_split_array(modes_in_procid_file,val)
@@ -160,6 +161,7 @@ end
 
 function mode_index_in_file(arr₁::AbstractVector,arr₂::AbstractVector,
 	(arr₁_value,arr₂_value)::Tuple,num_procs::Integer,proc_id_mode::Integer)
+
 	modes_in_procid_file = split_product_across_processors(arr₁,arr₂,num_procs,proc_id_mode)
 	mode_index = get_index_in_split_array(modes_in_procid_file,(arr₁_value,arr₂_value))
 end
@@ -229,7 +231,11 @@ get_nodes(procs_used::Vector{<:Integer}=workers()) = get_nodes(get_hostnames(pro
 
 function get_nprocs_node(hostnames::Vector{String})
 	nodes = get_nodes(hostnames)
-	num_procs_node = Dict(node=>count(x->x==node,hostnames) for node in nodes)
+	get_nprocs_node(hostnames,nodes)	
+end
+
+function get_nprocs_node(hostnames::Vector{String},nodes::Vector{String})
+	Dict(node=>count(isequal(node),hostnames) for node in nodes)
 end
 
 get_nprocs_node(procs_used::Vector{<:Integer}=workers()) = get_nprocs_node(get_hostnames(procs_used))
@@ -238,40 +244,46 @@ function pmapsum(f::Function,iterable,args...;kwargs...)
 
 	procs_used = workers_active(iterable)
 
-	futures = pmap_onebatch_per_worker(f,iterable,args...;kwargs...)
+	num_workers = length(procs_used);
+	hostnames = get_hostnames(procs_used);
+	nodes = get_nodes(hostnames);
+	pid_rank0_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
 
-	function final_sum(futures)
-		s = fetch(first(futures))
-		@sync for f in futures[2:end]
-			@async begin
-				s += fetch(f)
+	nprocs_node = get_nprocs_node(procs_used)
+	node_channels = Dict(node=>RemoteChannel(()->Channel{Any}(nprocs_node[node]),pid_node)
+		for (node,pid_node) in zip(nodes,pid_rank0_on_node))
+
+	# Worker at which final reduction takes place
+	p_final = first(pid_rank0_on_node)
+
+	sum_channel = RemoteChannel(()->Channel{Any}(length(pid_rank0_on_node)),p_final)
+	result = nothing
+
+	# Run the function on each processor and compute the sum at each node
+	@sync for (rank,(p,node)) in enumerate(zip(procs_used,hostnames))
+		@async begin
+			
+			iterable_on_proc = split_across_processors(iterable,num_workers,rank)
+			r = @spawnat p f(iterable_on_proc,args...;kwargs...)
+
+			node_remotechannel = node_channels[node]
+			np_node = nprocs_node[node]
+			
+			@spawnat p put!(node_remotechannel,fetch(r))
+
+			if p in pid_rank0_on_node
+				s = @spawnat p sum(take!(node_remotechannel) for i=1:np_node)
+				@spawnat p put!(sum_channel,fetch(s))
+			end
+
+			if p==p_final
+				result = @fetchfrom p_final sum(take!(sum_channel) 
+					for i=1:length(pid_rank0_on_node))			
 			end
 		end
-		return s
-	end
-	@fetchfrom first(procs_used) final_sum(futures)
-end
-
-function pmapsum_timed(f::Function,iterable,args...;kwargs...)
-
-	procs_used = workers_active(iterable)
-
-	futures = pmap_onebatch_per_worker(f,iterable,args...;kwargs...)
-
-	timer = TimerOutput()
-	function final_sum(futures,timer)
-		@timeit timer "fetch" s = fetch(first(futures))
-		@sync for f in futures[2:end]
-			@async begin
-				@timeit timer "fetch" s += fetch(f)
-			end
-		end
-		return s,timer
 	end
 
-	s,timer = @fetchfrom first(procs_used) final_sum(futures,timer)
-	println(timer)
-	return s
+	return result
 end
 
 function pmap_onebatch_per_worker(f::Function,iterable,args...;kwargs...)
@@ -291,12 +303,6 @@ function pmap_onebatch_per_worker(f::Function,iterable,args...;kwargs...)
 		end
 	end
 	return futures
-end
-
-function sum_at_node(futures::Vector{Future},hostnames)
-	myhost = hostnames[worker_rank()]
-	futures_on_myhost = futures[hostnames .== myhost]
-	sum(fetch(f) for f in futures_on_myhost)
 end
 
 end # module
