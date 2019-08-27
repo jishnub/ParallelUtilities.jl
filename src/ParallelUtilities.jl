@@ -3,33 +3,46 @@ module ParallelUtilities
 using Reexport
 @reexport using Distributed
 
-worker_rank() = myid()-minimum(workers())+1
+export split_across_processors,split_product_across_processors,
+get_processor_id_from_split_array,
+procid_allmodes,mode_index_in_file,
+get_processor_range_from_split_array,workers_active,worker_rank,
+get_index_in_split_array,procid_and_mode_index,minmax_from_split_array,
+node_remotechannels,pmapsum,sum_at_node,pmap_onebatch_per_worker,
+get_nodes,get_hostnames,get_nprocs_node
+
+function worker_rank()
+    if nworkers()==1
+        return 1
+    end
+    myid()-minimum(workers())+1
+end
 
 function split_across_processors(num_tasks::Integer,num_procs=nworkers(),proc_id=worker_rank())
-	if num_procs == 1
-		return num_tasks
-	end
+    if num_procs == 1
+        return num_tasks
+    end
 
-	num_tasks_per_process,num_tasks_leftover = div(num_tasks,num_procs),mod(num_tasks,num_procs)
+    num_tasks_per_process,num_tasks_leftover = div(num_tasks,num_procs),mod(num_tasks,num_procs)
 
-	num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
-	task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover+1,proc_id);
+    num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
+    task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover+1,proc_id);
 
-	return task_start:(task_start+num_tasks_on_proc-1)
+    return task_start:(task_start+num_tasks_on_proc-1)
 end
 
 function split_across_processors(arr₁,num_procs=nworkers(),proc_id=worker_rank())
 
-	@assert(proc_id<=num_procs,"processor rank has to be less than number of workers engaged")
+    @assert(proc_id<=num_procs,"processor rank has to be less than number of workers engaged")
 
-	num_tasks = length(arr₁);
+    num_tasks = length(arr₁);
 
-	num_tasks_per_process,num_tasks_leftover = div(num_tasks,num_procs),mod(num_tasks,num_procs)
+    num_tasks_per_process,num_tasks_leftover = div(num_tasks,num_procs),mod(num_tasks,num_procs)
 
-	num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
-	task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover+1,proc_id);
+    num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
+    task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover+1,proc_id);
 
-	Iterators.take(Iterators.drop(arr₁,task_start-1),num_tasks_on_proc)
+    Iterators.take(Iterators.drop(arr₁,task_start-1),num_tasks_on_proc)
 end
 
 function split_product_across_processors(arr₁,arr₂,num_procs::Integer=nworkers(),proc_id::Integer=worker_rank())
@@ -94,16 +107,28 @@ function get_processor_range_from_split_array(arr₁,arr₂,modes_on_proc,num_pr
 	return proc_id_start:proc_id_end
 end
 
-function get_index_in_split_array(modes_on_proc,(arr₁_value,arr₂_value))
-	if isnothing(modes_on_proc)
-		return nothing
-	end
-	for (ind,(t1,t2)) in enumerate(modes_on_proc)
-		if (t1==arr₁_value) && (t2 == arr₂_value)
-			return ind
-		end
-	end
-	nothing
+function get_processor_range_from_split_array(iter,iter_section,num_procs::Integer)
+        
+    if isempty(iter_section)
+            return 0:-1 # empty range
+    end
+
+    tasks_arr = collect(iter_section)
+    proc_id_start = get_processor_id_from_split_array(iter,first(tasks_arr),num_procs)
+    proc_id_end = get_processor_id_from_split_array(iter,last(tasks_arr),num_procs)
+    return proc_id_start:proc_id_end
+end
+
+function get_index_in_split_array(iter_section,val::Tuple)
+    if isnothing(iter_section)
+        return nothing
+    end
+    for (ind,val_ind) in enumerate(iter_section)
+        if val_ind == val
+            return ind
+        end
+    end
+    nothing
 end
 
 function procid_and_mode_index(arr₁,arr₂,(arr₁_value,arr₂_value),num_procs)
@@ -111,6 +136,13 @@ function procid_and_mode_index(arr₁,arr₂,(arr₁_value,arr₂_value),num_pro
 	modes_in_procid_file = split_product_across_processors(arr₁,arr₂,num_procs,proc_id_mode)
 	mode_index = get_index_in_split_array(modes_in_procid_file,(arr₁_value,arr₂_value))
 	return proc_id_mode,mode_index
+end
+
+function procid_and_mode_index(iter,val::Tuple,num_procs::Integer)
+    proc_id_mode = get_processor_id_from_split_array(iter,val,num_procs)
+    modes_in_procid_file = split_across_processors(iter,num_procs,proc_id_mode)
+    mode_index = get_index_in_split_array(modes_in_procid_file,val)
+    return proc_id_mode,mode_index
 end
 
 function mode_index_in_file(arr₁,arr₂,(arr₁_value,arr₂_value),num_procs,proc_id_mode)
@@ -132,16 +164,41 @@ workers_active(arr₁,arr₂) = workers_active(Iterators.product(arr₁,arr₂))
 
 nworkers_active(args...) = length(workers_active(args...))
 
-function minmax_from_split_array(iterable)
-	arr₁_min,arr₂_min = first(iterable)
-	arr₁_max,arr₂_max = arr₁_min,arr₂_min
-	for (arr₁_value,arr₂_value) in iterable
-		arr₁_min = min(arr₁_min,arr₁_value)
-		arr₁_max = max(arr₁_max,arr₁_value)
-		arr₂_min = min(arr₂_min,arr₂_value)
-		arr₂_max = max(arr₂_max,arr₂_value)
-	end
-	return (arr₁_min=arr₁_min,arr₁_max=arr₁_max,arr₂_min=arr₂_min,arr₂_max=arr₂_max)
+function extrema_from_split_array(iterable)
+    val_first = first(iterable)
+    min_vals = collect(val_first)
+    max_vals = copy(min_vals)
+
+    for val in iterable
+        for (ind,vi) in enumerate(val)
+            min_vals[ind] = min(min_vals[ind],vi)
+            max_vals[ind] = max(max_vals[ind],vi)
+        end
+    end
+    collect(zip(min_vals,max_vals))
+end
+
+function moderanges_common_lastarray(iterable)
+    m = extrema_from_split_array(iterable)
+    lastvar_min = last(m)[1]
+    lastvar_max = last(m)[2]
+
+    val_first = first(iterable)
+    min_vals = collect(val_first[1:end-1])
+    max_vals = copy(min_vals)
+
+    for val in iterable
+        for (ind,vi) in enumerate(val[1:end-1])
+            if val[end]==lastvar_min
+                    min_vals[ind] = min(min_vals[ind],vi)
+            end
+            if val[end]==lastvar_max
+                    max_vals[ind] = max(max_vals[ind],vi)
+            end
+        end
+    end
+
+    [(m,lastvar_min) for m in min_vals],[(m,lastvar_max) for m in max_vals]
 end
 
 function get_hostnames(procs_used=workers())
@@ -228,15 +285,5 @@ function pmap_onebatch_per_worker(f::Function,iterable,args...;num_workers=nothi
 	end
 	return futures
 end
-
-#############################################################################
-
-export split_across_processors,split_product_across_processors,
-get_processor_id_from_split_array,
-procid_allmodes,mode_index_in_file,
-get_processor_range_from_split_array,workers_active,worker_rank,
-get_index_in_split_array,procid_and_mode_index,minmax_from_split_array,
-node_remotechannels,pmapsum,sum_at_node,pmap_onebatch_per_worker,
-get_nodes,get_hostnames,get_nprocs_node
 
 end # module
