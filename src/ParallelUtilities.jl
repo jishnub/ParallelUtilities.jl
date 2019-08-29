@@ -106,18 +106,10 @@ function get_processor_id_from_split_array(iter,val::Tuple,num_procs)
 	return 0
 end
 
-function get_processor_range_from_split_array(arr₁::AbstractVector,arr₂::AbstractVector,
-	iter_section,num_procs::Integer)
-	
-	if isempty(iter_section)
-		return 0:-1 # empty range
-	end
-
-	tasks_arr = collect(iter_section)
-	proc_id_start = get_processor_id_from_split_array(arr₁,arr₂,first(tasks_arr),num_procs)
-	proc_id_end = get_processor_id_from_split_array(arr₁,arr₂,last(tasks_arr),num_procs)
-	return proc_id_start:proc_id_end
-end
+get_processor_id_from_split_array(arr₁::AbstractVector,arr₂::AbstractVector,
+	val::Tuple{Any,Any},num_procs::Integer) = 
+	get_processor_id_from_split_array(Iterators.product(arr₁,arr₂),
+		val,num_procs)
 
 function get_processor_range_from_split_array(iter,iter_section,num_procs::Integer)
 	
@@ -125,11 +117,22 @@ function get_processor_range_from_split_array(iter,iter_section,num_procs::Integ
 		return 0:-1 # empty range
 	end
 
-	tasks_arr = collect(iter_section)
-	proc_id_start = get_processor_id_from_split_array(iter,first(tasks_arr),num_procs)
-	proc_id_end = get_processor_id_from_split_array(iter,last(tasks_arr),num_procs)
+	first_task = first(iter_section) 
+	proc_id_start = get_processor_id_from_split_array(iter,first_task,num_procs)
+
+	last_task = first_task
+	for t in iter_section
+		last_task = t
+	end
+
+	proc_id_end = get_processor_id_from_split_array(iter,last_task,num_procs)
 	return proc_id_start:proc_id_end
 end
+
+get_processor_range_from_split_array(arr₁::AbstractVector,arr₂::AbstractVector,
+	iter_section,num_procs::Integer) =
+	get_processor_range_from_split_array(Iterators.product(arr₁,arr₂),
+		iter_section,num_procs)
 
 function get_index_in_split_array(iter_section,val::Tuple)
 	if isnothing(iter_section)
