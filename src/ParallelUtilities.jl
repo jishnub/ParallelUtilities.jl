@@ -55,7 +55,7 @@ function split_product_across_processors(arrs_tuple,num_procs::Integer=nworkers(
 end
 
 function get_processor_id_from_split_array(arr₁::AbstractVector,arr₂::AbstractVector,
-	(arr₁_value,arr₂_value)::Tuple,num_procs)
+	(arr₁_value,arr₂_value)::Tuple,num_procs::Integer)
 	# Find the closest match in arrays
 
 	if (arr₁_value ∉ arr₁) || (arr₂_value ∉ arr₂)
@@ -96,7 +96,7 @@ function get_processor_id_from_split_array(arr₁::AbstractVector,arr₂::Abstra
 	return proc_id
 end
 
-function get_processor_id_from_split_array(iter,val::Tuple,num_procs)
+function get_processor_id_from_split_array(iter,val,num_procs)
 	for proc_id in 1:num_procs
 		tasks_on_proc = split_across_processors(iter,num_procs,proc_id)
 		if val ∈ tasks_on_proc
@@ -106,22 +106,21 @@ function get_processor_id_from_split_array(iter,val::Tuple,num_procs)
 	return 0
 end
 
-get_processor_id_from_split_array(arr₁::AbstractVector,arr₂::AbstractVector,
-	val::Tuple{Any,Any},num_procs::Integer) = 
-	get_processor_id_from_split_array(Iterators.product(arr₁,arr₂),
-		val,num_procs)
-
-function get_processor_range_from_split_array(iter,iter_section,num_procs::Integer)
+function get_processor_range_from_split_array(iter,vals,num_procs::Integer)
 	
-	if isempty(iter_section)
+	if isempty(vals)
 		return 0:-1 # empty range
 	end
 
-	first_task = first(iter_section) 
+	first_task = first(vals) 
 	proc_id_start = get_processor_id_from_split_array(iter,first_task,num_procs)
 
 	last_task = first_task
-	for t in iter_section
+	if length(vals) == 1
+		return proc_id_start:proc_id_start
+	end
+
+	for t in vals
 		last_task = t
 	end
 
@@ -130,9 +129,9 @@ function get_processor_range_from_split_array(iter,iter_section,num_procs::Integ
 end
 
 get_processor_range_from_split_array(arr₁::AbstractVector,arr₂::AbstractVector,
-	iter_section,num_procs::Integer) =
+	vals,num_procs::Integer) =
 	get_processor_range_from_split_array(Iterators.product(arr₁,arr₂),
-		iter_section,num_procs)
+		vals,num_procs)
 
 function get_index_in_split_array(iter_section,val::Tuple)
 	if isnothing(iter_section)
