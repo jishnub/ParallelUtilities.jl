@@ -265,6 +265,56 @@ function pmapsum(::Type{T},f::Function,iterable,args...;kwargs...) where {T}
 	@sync for (rank,(p,node)) in enumerate(zip(procs_used,hostnames))
 		@async begin
 			
+			node_remotechannel = node_channels[node]
+			np_node = nprocs_node[node]
+			
+			iterable_on_proc = split_across_processors(iterable,num_workers,rank)
+			@spawnat p put!(node_remotechannel,
+				f(iterable_on_proc,args...;kwargs...))
+
+			@async if p in pid_rank0_on_node
+				f = @spawnat p put!(sum_channel,
+					sum(take!(node_remotechannel) for i=1:np_node))
+				wait(f)
+				@spawnat p finalize(node_remotechannel)
+			end
+
+			@async if p==p_final
+				result = @fetchfrom p_final sum(take!(sum_channel)
+					for i=1:length(pid_rank0_on_node))
+				@spawnat p finalize(sum_channel)
+			end
+		end
+	end
+
+	return result :: T
+end
+
+function pmapsum(::Type{T},f::Function,iterable,args...;kwargs...) where {T<:AbstractArray}
+
+	# Use ArrayChannels
+
+	procs_used = workers_active(iterable)
+
+	num_workers = length(procs_used);
+	hostnames = get_hostnames(procs_used);
+	nodes = get_nodes(hostnames);
+	pid_rank0_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
+
+	nprocs_node = get_nprocs_node(procs_used)
+	node_channels = Dict(node=>RemoteChannel(()->Channel{T}(nprocs_node[node]),pid_node)
+		for (node,pid_node) in zip(nodes,pid_rank0_on_node))
+
+	# Worker at which final reduction takes place
+	p_final = first(pid_rank0_on_node)
+
+	sum_channel = RemoteChannel(()->Channel{T}(length(pid_rank0_on_node)),p_final)
+	result = nothing
+
+	# Run the function on each processor and compute the sum at each node
+	@sync for (rank,(p,node)) in enumerate(zip(procs_used,hostnames))
+		@async begin
+			
 			iterable_on_proc = split_across_processors(iterable,num_workers,rank)
 			r = @spawnat p f(iterable_on_proc,args...;kwargs...)
 
@@ -285,12 +335,11 @@ function pmapsum(::Type{T},f::Function,iterable,args...;kwargs...) where {T}
 		end
 	end
 
-	return result
+	return result :: T
 end
 
 function pmapsum(f::Function,iterable,args...;kwargs...)
-	T = promote_type(Base.return_types(f)...)
-	pmapsum(T,f,iterable,args...;kwargs...)
+	pmapsum(Any,f,iterable,args...;kwargs...)
 end
 
 function pmap_onebatch_per_worker(f::Function,iterable,args...;kwargs...)
