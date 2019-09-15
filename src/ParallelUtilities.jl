@@ -344,7 +344,7 @@ get_nprocs_node(procs_used::Vector{<:Integer}=workers()) = get_nprocs_node(get_h
 
 function pmapsum(f::Function,iterable,args...;kwargs...)
 	@distributed (+) for i in 1:nworkers()
-		np = workers_active(iterable)
+		np = nworkers_active(iterable)
 		iter_proc = split_across_processors(iterable,np,i)
 		f(iter_proc,args...;kwargs...)
 	end
