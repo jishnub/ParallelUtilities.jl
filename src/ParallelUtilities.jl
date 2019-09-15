@@ -302,7 +302,7 @@ function pmapsum_distributedfor(f::Function,iterable,args...;kwargs...)
 	end
 end
 
-pmapsum(f,args...;kwargs...) = pmapsum_remotechannel(f,args...;kwargs...)
+pmapsum(args...;kwargs...) = pmapsum_remotechannel(args...;kwargs...)
 
 function pmap_onebatch_per_worker(f::Function,iterable,args...;kwargs...)
 
