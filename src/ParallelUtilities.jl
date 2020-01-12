@@ -7,7 +7,7 @@ export split_across_processors,split_product_across_processors,
 get_processor_id_from_split_array,procid_allmodes,mode_index_in_file,
 get_processor_range_from_split_array,workers_active,nworkers_active,worker_rank,
 get_index_in_split_array,procid_and_mode_index,extrema_from_split_array,
-pmapsum,pmapsum_timed,sum_at_node,pmap_onebatch_per_worker,moderanges_common_lastarray,
+pmapsum,pmapreduce,pmap_onebatch_per_worker,moderanges_common_lastarray,
 get_nodes,get_hostnames,get_nprocs_node
 
 function worker_rank()
@@ -242,6 +242,7 @@ end
 
 get_nprocs_node(procs_used::Vector{<:Integer}=workers()) = get_nprocs_node(get_hostnames(procs_used))
 
+# This function does not sort the values, so it might be faster
 function pmapsum_remotechannel(::Type{T},f::Function,iterable,args...;kwargs...) where {T}
 
 	procs_used = workers_active(iterable)
@@ -290,8 +291,73 @@ function pmapsum_remotechannel(::Type{T},f::Function,iterable,args...;kwargs...)
 	return result :: T
 end
 
+# Store the processor id with the value
+struct pval{T}
+	p :: Int
+	parent :: T
+end
+
+function pmapreduce_remotechannel(::Type{T},fmap::Function,freduce::Function,
+	iterable,args...;kwargs...) where {T}
+
+	procs_used = workers_active(iterable)
+
+	num_workers = length(procs_used);
+	hostnames = get_hostnames(procs_used);
+	nodes = get_nodes(hostnames);
+	pid_rank0_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
+
+	nprocs_node = get_nprocs_node(procs_used)
+	node_channels = Dict(node=>RemoteChannel(()->Channel{T}(nprocs_node[node]),pid_node)
+		for (node,pid_node) in zip(nodes,pid_rank0_on_node))
+
+	# Worker at which final reduction takes place
+	p_final = first(pid_rank0_on_node)
+
+	reduce_channel = RemoteChannel(()->Channel{T}(length(pid_rank0_on_node)),p_final)
+	result = nothing
+
+	# Run the function on each processor and compute the sum at each node
+	@sync for (rank,(p,node)) in enumerate(zip(procs_used,hostnames))
+		@async begin
+			
+			node_remotechannel = node_channels[node]
+			np_node = nprocs_node[node]
+			
+			iterable_on_proc = split_across_processors(iterable,num_workers,rank)
+			@spawnat p put!(node_remotechannel,
+				pval(p,fmap(iterable_on_proc,args...;kwargs...)))
+
+			@async if p in pid_rank0_on_node
+				f = @spawnat p begin 
+					vals = [take!(node_remotechannel) for i=1:np_node ]
+					sort!(vals,by=x->x.p)
+					put!(reduce_channel,pval(p,freduce(v.parent for v in vals))	)
+				end
+				wait(f)
+				@spawnat p finalize(node_remotechannel)
+			end
+
+			@async if p==p_final
+				result = @fetchfrom p_final begin
+					vals = [take!(reduce_channel) for i=1:length(pid_rank0_on_node)]
+					sort!(vals,by=x->x.p)
+					freduce(v.parent for v in vals)
+				end
+				@spawnat p finalize(reduce_channel)
+			end
+		end
+	end
+
+	return result :: T
+end
+
 function pmapsum_remotechannel(f::Function,iterable,args...;kwargs...)
-	pmapsum(Any,f,iterable,args...;kwargs...)
+	pmapsum_remotechannel(Any,f,iterable,args...;kwargs...)
+end
+
+function pmapreduce_remotechannel(fmap::Function,freduce::Function,iterable,args...;kwargs...)
+	pmapreduce_remotechannel(Any,fmap,freduce,iterable,args...;kwargs...)
 end
 
 function pmapsum_distributedfor(f::Function,iterable,args...;kwargs...)
@@ -302,7 +368,16 @@ function pmapsum_distributedfor(f::Function,iterable,args...;kwargs...)
 	end
 end
 
+function pmapreduce_distributedfor(fmap::Function,freduce::Function,iterable,args...;kwargs...)
+	@distributed freduce for i in 1:nworkers()
+		np = nworkers_active(iterable)
+		iter_proc = split_across_processors(iterable,np,i)
+		fmap(iter_proc,args...;kwargs...)
+	end
+end
+
 pmapsum(args...;kwargs...) = pmapsum_remotechannel(args...;kwargs...)
+pmapreduce(args...;kwargs...) = pmapreduce_remotechannel(args...;kwargs...)
 
 function pmap_onebatch_per_worker(f::Function,iterable,args...;kwargs...)
 
