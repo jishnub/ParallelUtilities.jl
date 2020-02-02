@@ -1,14 +1,284 @@
 module ParallelUtilities
 
-using Reexport,TimerOutputs
+using Reexport
 @reexport using Distributed
 
-export split_across_processors,split_product_across_processors,
+export ProductSplit,split_across_processors,split_product_across_processors,
 get_processor_id_from_split_array,procid_allmodes,mode_index_in_file,
 get_processor_range_from_split_array,workers_active,nworkers_active,worker_rank,
 get_index_in_split_array,procid_and_mode_index,extrema_from_split_array,
 pmapsum,pmapreduce,pmap_onebatch_per_worker,moderanges_common_lastarray,
 get_nodes,get_hostnames,get_nprocs_node
+
+# The fundamental iterator that behaves like an Iterator.ProductIterator
+
+struct ProcessorNumberError <: Exception 
+	p :: Int
+	np :: Int
+end
+
+function Base.showerror(io::IO,p::ProcessorNumberError)
+	print(io,"Processor id $(p.p) does not line in the range $(1:p.np)")
+end
+
+struct DecreasingIteratorError <: Exception 
+end
+
+function Base.showerror(io::IO,p::DecreasingIteratorError)
+	print(io,"All the iterators need to be strictly increasing")
+end
+
+struct ProductSplit{T,N,Q}
+	iterators :: NTuple{N,Q}
+	togglelevels :: NTuple{N,Int}
+	np :: Int
+	p :: Int
+	firstind :: Int
+	lastind :: Int
+
+	function ProductSplit(iterators::NTuple{N,Q},togglelevels::NTuple{N,Int},
+		np::Int,p::Int,firstind::Int,lastind::Int) where {N,Q<:AbstractRange}
+
+		1 <= p <= np || throw(ProcessorNumberError(p,np))
+		T = NTuple{N,eltype(Q)}
+
+		# Check to make sure that all the iterators are increasing
+		all(x->step(x)>0,iterators) || throw(DecreasingIteratorError())
+
+		new{T,N,Q}(iterators,togglelevels,np,p,firstind,lastind)
+	end
+end
+Base.eltype(::ProductSplit{T}) where {T} = T
+
+function _cumprod(len)
+	(0,_cumprod(first(len),Base.tail(len))...)
+end
+
+_cumprod(::Int,::Tuple{}) = ()
+function _cumprod(n::Int,tl::Tuple)
+	(n,_cumprod(n*first(tl),Base.tail(tl))...)
+end
+
+function ProductSplit(iterators::NTuple{N,Q},np,p) where {N,Q}
+	T = NTuple{N,eltype(Q)}
+	len = Base.Iterators._prod_size(iterators)
+	Nel = prod(len)
+	togglelevels = _cumprod(len)
+	d,r = divrem(Nel,np)
+	firstind = d*(p-1) + min(r,p-1) + 1
+	lastind = d*p + min(r,p)
+	ProductSplit(iterators,togglelevels,np,p,firstind,lastind)
+end
+
+@inline Base.@propagate_inbounds Base.first(p::ProductSplit) = 
+	_first(p.iterators,childindex(p,p.firstind)...)
+	
+@inline function _first(t::Tuple,ind::Int,rest::Int...)
+	@boundscheck (1 <= ind <= length(first(t))) || throw(BoundsError(first(t),ind))
+	(@inbounds first(t)[ind],_first(Base.tail(t),rest...)...)
+end
+@inline _first(::Tuple{},rest...) = ()
+
+@inline Base.length(p::ProductSplit) = p.lastind - p.firstind + 1
+@inline Base.lastindex(p::ProductSplit) = p.lastind - p.firstind + 1
+
+@inline function childindex(p::ProductSplit,ind::Int)
+	tl = reverse(Base.tail(p.togglelevels))
+	reverse(childindex(tl,ind))
+end
+
+@inline function childindex(tl::Tuple,ind::Int)
+	t = first(tl)
+	k = div(ind-1,t)
+	(k+1,childindex(Base.tail(tl),ind-k*t)...)
+end
+
+# First iterator gets the final remainder
+@inline childindex(::Tuple{},ind::Int) = (ind,)
+
+@inline childindexshifted(p::ProductSplit,ind::Int) = childindex(p, (ind - 1) + p.firstind)
+
+@inline Base.@propagate_inbounds function Base.getindex(p::ProductSplit,ind::Int)
+	_getindex(p,childindexshifted(p, ind)...)
+end
+# This needs to be a separate function to deal with the case of a single child iterator, in which case 
+# it's not clear if the single index is for the ProductSplit or the child iterator
+
+# This method asserts that the number of indices are correct
+@inline Base.@propagate_inbounds function _getindex(p::ProductSplit{<:Any,N},
+	inds::Vararg{Int,N}) where {N}
+	
+	_getindex(p.iterators,inds...)
+end
+
+@inline function _getindex(p::Tuple,ind::Int,rest::Int...)
+	@boundscheck (1 <= ind <= length(first(p))) || throw(BoundsError(first(p),ind))
+	(@inbounds first(p)[ind],_getindex(Base.tail(p),rest...)...)
+end
+@inline _getindex(::Tuple{},rest::Int...) = ()
+
+function Base.iterate(p::ProductSplit,state=(first(p),1))
+	el,n = state
+
+	if n > length(p)
+		return nothing
+	elseif n == length(p)
+		# In this case the next value doesn't matter, so just return something arbitary
+		return (el,(p[1],n+1))
+	end
+
+	(el,(p[n+1],n+1))
+end
+
+@inline Base.@propagate_inbounds function _firstlastdim(p::ProductSplit{<:Any,N},dim::Int,
+	firstindchild::Tuple=childindex(p,p.firstind),
+	lastindchild::Tuple=childindex(p,p.lastind)) where {N}
+
+	_firstlastdim(p.iterators,dim,firstindchild,lastindchild)
+end
+
+@inline function _firstlastdim(iterators::NTuple{N,<:Any},dim::Int,
+	firstindchild::Tuple,lastindchild::Tuple) where {N}
+
+	@boundscheck (1 <= dim <= N) || throw(BoundsError(iterators,dim))
+
+	iter = @inbounds iterators[dim]
+
+	fic = @inbounds firstindchild[dim]
+	lic = @inbounds lastindchild[dim]
+
+	first_iter = @inbounds iter[fic]
+	last_iter = @inbounds iter[lic]
+
+	(first_iter,last_iter)
+end
+
+function _checkrollover(p::ProductSplit{<:Any,N},dim::Int,
+	firstindchild::Tuple=childindex(p,p.firstind),
+	lastindchild::Tuple=childindex(p,p.lastind)) where {N}
+
+	_checkrollover(p.iterators,dim,firstindchild,lastindchild)
+end
+
+function _checkrollover(t::NTuple{N,<:Any},dim::Int,
+	firstindchild::Tuple,lastindchild::Tuple) where {N}
+
+	if dim > 0
+		return _checkrollover(Base.tail(t),dim-1,Base.tail(firstindchild),Base.tail(lastindchild))
+	end
+
+	!_checknorollover(reverse(t),reverse(firstindchild),reverse(lastindchild))
+end
+
+function _checknorollover(t,firstindchild,lastindchild)
+	iter = first(t)
+	first_iter = iter[first(firstindchild)]
+	last_iter = iter[first(lastindchild)]
+
+	(last_iter == first_iter) & 
+		_checknorollover(Base.tail(t),Base.tail(firstindchild),Base.tail(lastindchild))
+end
+_checknorollover(::Tuple{},::Tuple{},::Tuple{}) = true
+
+@inline function Base.maximum(p::ProductSplit{<:Any,1},dim::Int=1)
+	@boundscheck (dim > 1) && throw(BoundsError(p.iterators,dim))
+	lastindchild = childindex(p,p.lastind)
+	@inbounds lic_dim = lastindchild[1]
+	@inbounds iter = p.iterators[1]
+	iter[lic_dim]
+end
+
+@inline function Base.maximum(p::ProductSplit{<:Any,N},dim::Int) where {N}
+
+	@boundscheck (1 <= dim <= N) || throw(BoundsError(p.iterators,dim))
+	
+	firstindchild = childindex(p,p.firstind)
+	lastindchild = childindex(p,p.lastind)
+
+	@inbounds first_iter,last_iter = _firstlastdim(p,dim,firstindchild,lastindchild)
+
+	v = last_iter
+
+	# The last index will not roll over so this can be handled easily
+	if dim == N
+		return v
+	end
+
+	if _checkrollover(p,dim,firstindchild,lastindchild)
+		iter = @inbounds p.iterators[dim]
+		v = maximum(iter)
+	end
+
+	return v
+end
+
+@inline function Base.minimum(p::ProductSplit{<:Any,1},dim::Int=1)
+	@boundscheck (dim > 1) && throw(BoundsError(p.iterators,dim))
+	firstindchild = childindex(p,p.firstind)
+	@inbounds fic_dim = firstindchild[1]
+	@inbounds iter = p.iterators[1]
+	iter[fic_dim]
+end
+
+@inline function Base.minimum(p::ProductSplit{<:Any,N},dim::Int) where {N}
+	
+	@boundscheck (1 <= dim <= N) || throw(BoundsError(p.iterators,dim))
+
+	firstindchild = childindex(p,p.firstind)
+	lastindchild = childindex(p,p.lastind)
+
+	@inbounds first_iter,last_iter = _firstlastdim(p,dim,firstindchild,lastindchild)
+
+	v = first_iter
+
+	# The last index will not roll over so this can be handled easily
+	if dim == N
+		return v
+	end
+
+	if _checkrollover(p,dim,firstindchild,lastindchild)
+		iter = @inbounds p.iterators[dim]
+		v = minimum(iter)
+	end
+
+	return v
+end
+
+@inline function Base.extrema(p::ProductSplit{<:Any,1},dim::Int=1)
+	@boundscheck (dim > 1) && throw(BoundsError(p.iterators,dim))
+	firstindchild = childindex(p,p.firstind)
+	lastindchild = childindex(p,p.lastind)
+	@inbounds fic_dim = firstindchild[1]
+	@inbounds lic_dim = lastindchild[1]
+	@inbounds iter = p.iterators[1]
+	
+	(iter[fic_dim],iter[lic_dim])
+end
+
+@inline function Base.extrema(p::ProductSplit{<:Any,N},dim::Int) where {N}
+	
+	@boundscheck (1 <= dim <= N) || throw(BoundsError(p.iterators,dim))
+
+	firstindchild = childindex(p,p.firstind)
+	lastindchild = childindex(p,p.lastind)
+
+	@inbounds first_iter,last_iter = _firstlastdim(p,dim,firstindchild,lastindchild)
+
+	v = (first_iter,last_iter)
+	# The last index will not roll over so this can be handled easily
+	if dim == N
+		return v
+	end
+
+	if _checkrollover(p,dim,firstindchild,lastindchild)
+		iter = @inbounds p.iterators[dim]
+		v = extrema(iter)
+	end
+
+	return v
+end
+
+###################################################################################################
 
 function worker_rank()
 	if nworkers()==1
@@ -30,7 +300,7 @@ function split_across_processors(num_tasks::Integer,num_procs=nworkers(),proc_id
     return task_start:(task_start+num_tasks_on_proc-1)
 end
 
-function split_across_processors(arr₁,num_procs=nworkers(),proc_id=worker_rank())
+function split_across_processors(arr₁::Base.Iterators.ProductIterator,num_procs=nworkers(),proc_id=worker_rank())
 
     @assert(proc_id<=num_procs,"processor rank has to be less than number of workers engaged")
 
@@ -39,7 +309,7 @@ function split_across_processors(arr₁,num_procs=nworkers(),proc_id=worker_rank
     num_tasks_per_process,num_tasks_leftover = div(num_tasks,num_procs),mod(num_tasks,num_procs)
 
     num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
-    task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover+1,proc_id);
+    task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover,proc_id-1) + 1;
 
     Iterators.take(Iterators.drop(arr₁,task_start-1),num_tasks_on_proc)
 end
@@ -50,7 +320,8 @@ function split_product_across_processors(arr₁::AbstractVector,arr₂::Abstract
 	split_across_processors(Iterators.product(arr₁,arr₂),num_procs,proc_id)
 end
 
-function split_product_across_processors(arrs_tuple,num_procs::Integer=nworkers(),proc_id::Integer=worker_rank())
+function split_product_across_processors(arrs_tuple::NTuple,
+	num_procs::Integer=nworkers(),proc_id::Integer=worker_rank())
 	return split_across_processors(Iterators.product(arrs_tuple...),num_procs,proc_id)
 end
 
@@ -103,7 +374,11 @@ function get_processor_id_from_split_array(iter,val,num_procs)
 			return proc_id
 		end
 	end
-	return 0
+	return nothing
+end
+
+function get_processor_id_from_split_array(iter::ProductSplit{T},val::T) where {T}
+	get_processor_id_from_split_array(iter.iterators_product,val,iter.num_procs)
 end
 
 function get_processor_range_from_split_array(iter,vals,num_procs::Integer)
@@ -126,6 +401,10 @@ function get_processor_range_from_split_array(iter,vals,num_procs::Integer)
 
 	proc_id_end = get_processor_id_from_split_array(iter,last_task,num_procs)
 	return proc_id_start:proc_id_end
+end
+
+function get_processor_range_from_split_array(iter::ProductSplit{T},val::T) where {T}
+	get_processor_range_from_split_array(iter.iterators_product,val,iterators.num_procs)
 end
 
 get_processor_range_from_split_array(arr₁::AbstractVector,arr₂::AbstractVector,
