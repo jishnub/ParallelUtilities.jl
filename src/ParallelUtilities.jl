@@ -130,14 +130,14 @@ function Base.iterate(p::ProductSplit,state=(first(p),1))
 	(el,(p[n+1],n+1))
 end
 
-@inline Base.@propagate_inbounds function _firstlastdim(p::ProductSplit{<:Any,N},dim::Int,
+@inline Base.@propagate_inbounds function _firstlastalongdim(p::ProductSplit{<:Any,N},dim::Int,
 	firstindchild::Tuple=childindex(p,p.firstind),
 	lastindchild::Tuple=childindex(p,p.lastind)) where {N}
 
-	_firstlastdim(p.iterators,dim,firstindchild,lastindchild)
+	_firstlastalongdim(p.iterators,dim,firstindchild,lastindchild)
 end
 
-@inline function _firstlastdim(iterators::NTuple{N,<:Any},dim::Int,
+@inline Base.@propagate_inbounds function _firstlastalongdim(iterators::NTuple{N,<:Any},dim::Int,
 	firstindchild::Tuple,lastindchild::Tuple) where {N}
 
 	@boundscheck (1 <= dim <= N) || throw(BoundsError(iterators,dim))
@@ -195,7 +195,7 @@ end
 	firstindchild = childindex(p,p.firstind)
 	lastindchild = childindex(p,p.lastind)
 
-	@inbounds first_iter,last_iter = _firstlastdim(p,dim,firstindchild,lastindchild)
+	@inbounds first_iter,last_iter = _firstlastalongdim(p,dim,firstindchild,lastindchild)
 
 	v = last_iter
 
@@ -227,7 +227,7 @@ end
 	firstindchild = childindex(p,p.firstind)
 	lastindchild = childindex(p,p.lastind)
 
-	@inbounds first_iter,last_iter = _firstlastdim(p,dim,firstindchild,lastindchild)
+	@inbounds first_iter,last_iter = _firstlastalongdim(p,dim,firstindchild,lastindchild)
 
 	v = first_iter
 
@@ -262,7 +262,7 @@ end
 	firstindchild = childindex(p,p.firstind)
 	lastindchild = childindex(p,p.lastind)
 
-	@inbounds first_iter,last_iter = _firstlastdim(p,dim,firstindchild,lastindchild)
+	@inbounds first_iter,last_iter = _firstlastalongdim(p,dim,firstindchild,lastindchild)
 
 	v = (first_iter,last_iter)
 	# The last index will not roll over so this can be handled easily
@@ -278,6 +278,36 @@ end
 	return v
 end
 
+_infullrange(val::T,p::ProductSplit{T}) where {T} = _infullrange(val,p.iterators)
+
+function _infullrange(val,t::Tuple)
+	first(val) in first(t) && _infullrange(Base.tail(val),Base.tail(t))
+end
+_infullrange(::Tuple{},::Tuple{}) = true
+
+struct OrderedTuple{T}
+	t :: T
+end
+
+function Base.:<=(a::OrderedTuple{T},b::OrderedTuple{T}) where {T}
+	_le(reverse(a.t),reverse(b.t))	
+end
+
+function _le(t1::Tuple,t2::Tuple)
+	first(t1) < first(t2) || ((first(t1) == first(t2)) & _le(Base.tail(t1),Base.tail(t2)))
+end
+_le(::Tuple{},::Tuple{}) = true
+
+function Base.in(val::T,p::ProductSplit{T}) where {T}
+	_infullrange(val,p) || return false
+	
+	val_ot = OrderedTuple(val)
+	first_iter = OrderedTuple(p[1])
+	last_iter = OrderedTuple(p[end])
+
+	first_iter <= val_ot <= last_iter
+end
+
 ###################################################################################################
 
 function worker_rank()
@@ -287,42 +317,32 @@ function worker_rank()
 	myid()-minimum(workers())+1
 end
 
+# function split_across_processors_iterators(arr₁::Base.Iterators.ProductIterator,num_procs,proc_id)
+
+#     @assert(proc_id<=num_procs,"processor rank has to be less than number of workers engaged")
+
+#     num_tasks = length(arr₁);
+
+#     num_tasks_per_process,num_tasks_leftover = div(num_tasks,num_procs),mod(num_tasks,num_procs)
+
+#     num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
+#     task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover,proc_id-1) + 1;
+
+#     Iterators.take(Iterators.drop(arr₁,task_start-1),num_tasks_on_proc)
+# end
+
+# function split_product_across_processors_iterators(arrs_tuple,num_procs,proc_id)
+# 	split_across_processors_iterators(Iterators.product(arrs_tuple...),num_procs,proc_id)
+# end
+
 function split_across_processors(num_tasks::Integer,num_procs=nworkers(),proc_id=worker_rank())
-    if num_procs == 1
-        return num_tasks
-    end
-
-    num_tasks_per_process,num_tasks_leftover = div(num_tasks,num_procs),mod(num_tasks,num_procs)
-
-    num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
-    task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover+1,proc_id);
-
-    return task_start:(task_start+num_tasks_on_proc-1)
+    split_product_across_processors((1:num_tasks,),num_procs,proc_id)
 end
 
-function split_across_processors(arr₁::Base.Iterators.ProductIterator,num_procs=nworkers(),proc_id=worker_rank())
-
-    @assert(proc_id<=num_procs,"processor rank has to be less than number of workers engaged")
-
-    num_tasks = length(arr₁);
-
-    num_tasks_per_process,num_tasks_leftover = div(num_tasks,num_procs),mod(num_tasks,num_procs)
-
-    num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
-    task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover,proc_id-1) + 1;
-
-    Iterators.take(Iterators.drop(arr₁,task_start-1),num_tasks_on_proc)
-end
-
-function split_product_across_processors(arr₁::AbstractVector,arr₂::AbstractVector,
+function split_product_across_processors(arrs_tuple::Tuple,
 	num_procs::Integer=nworkers(),proc_id::Integer=worker_rank())
-	# arr₁ will change faster
-	split_across_processors(Iterators.product(arr₁,arr₂),num_procs,proc_id)
-end
-
-function split_product_across_processors(arrs_tuple::NTuple,
-	num_procs::Integer=nworkers(),proc_id::Integer=worker_rank())
-	return split_across_processors(Iterators.product(arrs_tuple...),num_procs,proc_id)
+	
+	ProductSplit(arrs_tuple,num_procs,proc_id)
 end
 
 function get_processor_id_from_split_array(arr₁::AbstractVector,arr₂::AbstractVector,
@@ -367,9 +387,9 @@ function get_processor_id_from_split_array(arr₁::AbstractVector,arr₂::Abstra
 	return proc_id
 end
 
-function get_processor_id_from_split_array(iter,val,num_procs)
+function get_processor_id_from_split_array(iterators,val,num_procs)
 	for proc_id in 1:num_procs
-		tasks_on_proc = split_across_processors(iter,num_procs,proc_id)
+		tasks_on_proc = split_product_across_processors(iterators,num_procs,proc_id)
 		if val ∈ tasks_on_proc
 			return proc_id
 		end
