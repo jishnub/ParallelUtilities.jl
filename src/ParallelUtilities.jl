@@ -4,10 +4,11 @@ using Reexport
 @reexport using Distributed
 
 export ProductSplit,split_across_processors,split_product_across_processors,
-get_processor_id_from_split_array,procid_allmodes,mode_index_in_file,
-get_processor_range_from_split_array,workers_active,nworkers_active,worker_rank,
-get_index_in_split_array,procid_and_mode_index,extrema_from_split_array,
-pmapsum,pmapreduce,pmap_onebatch_per_worker,moderanges_common_lastarray,
+get_pid_of_split_array,get_pid_range_of_split_array,pid_range,
+get_index_in_split_array,pid_and_index,
+extrema_from_split_array,extrema_common_lastdim,
+workers_active,nworkers_active,worker_rank,
+pmapsum,pmapreduce,pmap_onebatch_per_worker,
 get_nodes,get_hostnames,get_nprocs_node
 
 # The fundamental iterator that behaves like an Iterator.ProductIterator
@@ -296,11 +297,11 @@ Base.isequal(a::LittleEndianTuple{T},b::LittleEndianTuple{T}) where {T} = a.t ==
 function Base.in(val::T,p::ProductSplit{T}) where {T}
 	_infullrange(val,p) || return false
 	
-	val_ot = LittleEndianTuple(val)
+	val_lt = LittleEndianTuple(val)
 	first_iter = LittleEndianTuple(p[1])
 	last_iter = LittleEndianTuple(p[end])
 
-	first_iter <= val_ot <= last_iter
+	first_iter <= val_lt <= last_iter
 end
 
 ###################################################################################################
@@ -322,7 +323,7 @@ function split_product_across_processors(iterators::Tuple,
 	ProductSplit(iterators,np,pid)
 end
 
-function get_processor_id_from_split_array(iterators::Tuple,val::Tuple,np::Int)
+function get_pid_of_split_array(iterators::Tuple,val::Tuple,np::Int)
 	
 	_infullrange(val,iterators) || return nothing
 
@@ -346,18 +347,18 @@ function get_processor_id_from_split_array(iterators::Tuple,val::Tuple,np::Int)
 end
 
 # This function is necessary when you're changing np
-function get_processor_range_from_split_array(ps::ProductSplit,np_new::Int)
+function get_pid_range_of_split_array(ps::ProductSplit,np_new::Int)
 	
 	if length(ps)==0
 		return 0:-1 # empty range
 	end
 
-	pid_start = get_processor_id_from_split_array(ps.iterators,first(ps),np_new)
+	pid_start = get_pid_of_split_array(ps.iterators,first(ps),np_new)
 	if length(ps) == 1
 		return pid_start:pid_start
 	end
 
-	pid_end = get_processor_id_from_split_array(ps.iterators,last(ps),np_new)
+	pid_end = get_pid_of_split_array(ps.iterators,last(ps),np_new)
 	return pid_start:pid_end
 end
 
@@ -387,36 +388,22 @@ function get_index_in_split_array(ps::ProductSplit{T},val::T) where {T}
 	return nothing
 end
 
-function procid_and_mode_index(arr₁::AbstractVector,arr₂::AbstractVector,
-	(arr₁_value,arr₂_value)::Tuple,np::Integer)
-	pid_mode = get_processor_id_from_split_array(arr₁,arr₂,(arr₁_value,arr₂_value),np)
-	modes_in_procid_file = split_product_across_processors(arr₁,arr₂,np,pid_mode)
-	mode_index = get_index_in_split_array(modes_in_procid_file,(arr₁_value,arr₂_value))
-	return pid_mode,mode_index
+function get_index_in_split_array(iterators::Tuple,val::Tuple,np::Integer,pid::Integer)
+	ps = split_product_across_processors(iterators,np,pid)
+	get_index_in_split_array(ps,val)
 end
 
-function procid_and_mode_index(iterators::Tuple,val::Tuple,np::Integer)
-	pid_mode = get_processor_id_from_split_array(iterators,val,np)
-	modes_in_procid_file = split_across_processors(iterators,np,pid_mode)
-	mode_index = get_index_in_split_array(modes_in_procid_file,val)
-	return pid_mode,mode_index
+function pid_and_index(iterators::Tuple,val::Tuple,np::Integer)
+	pid = get_pid_of_split_array(iterators,val,np)
+	index = get_index_in_split_array(iterators,val,np,pid)
+	return pid,index
 end
 
-function mode_index_in_file(arr₁::AbstractVector,arr₂::AbstractVector,
-	(arr₁_value,arr₂_value)::Tuple,np::Integer,pid_mode::Integer)
-
-	modes_in_procid_file = split_product_across_processors(arr₁,arr₂,np,pid_mode)
-	mode_index = get_index_in_split_array(modes_in_procid_file,(arr₁_value,arr₂_value))
+function pid_range(iterators::Tuple,vals::Tuple,np::Int)
+	pid_first = get_pid_of_split_array(iterators,first(vals),np)
+	(pid_first,pid_range(iterators,Base.tail(vals),np)...)
 end
-
-function procid_allmodes(arr₁::AbstractVector,arr₂::AbstractVector,
-	iter,np=nworkers_active(arr₁,arr₂))
-	procid = zeros(Int64,length(iter))
-	for (ind,mode) in enumerate(iter)
-		procid[ind] = get_processor_id_from_split_array(arr₁,arr₂,mode,np)
-	end
-	return procid
-end
+pid_range(::Tuple,::Tuple{},::Int) = ()
 
 workers_active(arr) = workers()[1:min(length(arr),nworkers())]
 
@@ -424,36 +411,36 @@ workers_active(arrs...) = workers_active(Iterators.product(arrs...))
 
 nworkers_active(args...) = length(workers_active(args...))
 
-function extrema_from_split_array(iterable)
-	val_first = first(iterable)
-	min_vals = collect(val_first)
-	max_vals = copy(min_vals)
-
-	for val in iterable
-		for (ind,vi) in enumerate(val)
-			min_vals[ind] = min(min_vals[ind],vi)
-			max_vals[ind] = max(max_vals[ind],vi)
-		end
-	end
-	collect(zip(min_vals,max_vals))
+function extrema_from_split_array(ps::ProductSplit)
+	_extrema_from_split_array(ps,1,ps.iterators)
 end
 
-function moderanges_common_lastarray(iterable)
-	m = extrema_from_split_array(iterable)
+function _extrema_from_split_array(ps::ProductSplit,dim::Int,iterators::Tuple)
+	(extrema(ps,dim),_extrema_from_split_array(ps,dim+1,Base.tail(iterators))...)
+end
+_extrema_from_split_array(::ProductSplit,::Int,::Tuple{}) = ()
+
+function extrema_common_lastdim(ps::ProductSplit{<:Any,N}) where {N}
+	m = extrema_from_split_array(ps)
 	lastvar_min = last(m)[1]
 	lastvar_max = last(m)[2]
 
-	val_first = first(iterable)
+	val_first = first(ps)
+	val_last = last(ps)
 	min_vals = collect(val_first[1:end-1])
-	max_vals = copy(min_vals)
+	max_vals = collect(val_last[1:end-1])
 
-	for val in iterable
-		for (ind,vi) in enumerate(val[1:end-1])
-			if val[end]==lastvar_min
-				min_vals[ind] = min(min_vals[ind],vi)
+	for val in ps
+		val_rev = reverse(val)
+		lastvar = first(val_rev)
+		(lastvar_min < lastvar < lastvar_max) && continue
+
+		for (ind,vi) in enumerate(Base.tail(val_rev))
+			if lastvar==lastvar_min
+				min_vals[N-ind] = min(min_vals[N-ind],vi)
 			end
-			if val[end]==lastvar_max
-				max_vals[ind] = max(max_vals[ind],vi)
+			if lastvar==lastvar_max
+				max_vals[N-ind] = max(max_vals[N-ind],vi)
 			end
 		end
 	end
