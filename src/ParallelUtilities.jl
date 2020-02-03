@@ -285,25 +285,20 @@ function _infullrange(val,t::Tuple)
 end
 _infullrange(::Tuple{},::Tuple{}) = true
 
-struct OrderedTuple{T}
+# This struct is just a wrapper to flip the tuples before comparing
+struct LittleEndianTuple{T}
 	t :: T
 end
 
-function Base.:<=(a::OrderedTuple{T},b::OrderedTuple{T}) where {T}
-	_le(reverse(a.t),reverse(b.t))	
-end
-
-function _le(t1::Tuple,t2::Tuple)
-	first(t1) < first(t2) || ((first(t1) == first(t2)) & _le(Base.tail(t1),Base.tail(t2)))
-end
-_le(::Tuple{},::Tuple{}) = true
+Base.isless(a::LittleEndianTuple{T},b::LittleEndianTuple{T}) where {T} = reverse(a.t) < reverse(b.t)
+Base.isequal(a::LittleEndianTuple{T},b::LittleEndianTuple{T}) where {T} = a.t == b.t
 
 function Base.in(val::T,p::ProductSplit{T}) where {T}
 	_infullrange(val,p) || return false
 	
-	val_ot = OrderedTuple(val)
-	first_iter = OrderedTuple(p[1])
-	last_iter = OrderedTuple(p[end])
+	val_ot = LittleEndianTuple(val)
+	first_iter = LittleEndianTuple(p[1])
+	last_iter = LittleEndianTuple(p[end])
 
 	first_iter <= val_ot <= last_iter
 end
@@ -317,161 +312,108 @@ function worker_rank()
 	myid()-minimum(workers())+1
 end
 
-# function split_across_processors_iterators(arr₁::Base.Iterators.ProductIterator,num_procs,proc_id)
-
-#     @assert(proc_id<=num_procs,"processor rank has to be less than number of workers engaged")
-
-#     num_tasks = length(arr₁);
-
-#     num_tasks_per_process,num_tasks_leftover = div(num_tasks,num_procs),mod(num_tasks,num_procs)
-
-#     num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
-#     task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover,proc_id-1) + 1;
-
-#     Iterators.take(Iterators.drop(arr₁,task_start-1),num_tasks_on_proc)
-# end
-
-# function split_product_across_processors_iterators(arrs_tuple,num_procs,proc_id)
-# 	split_across_processors_iterators(Iterators.product(arrs_tuple...),num_procs,proc_id)
-# end
-
-function split_across_processors(num_tasks::Integer,num_procs=nworkers(),proc_id=worker_rank())
-    split_product_across_processors((1:num_tasks,),num_procs,proc_id)
+function split_across_processors(num_tasks::Integer,np=nworkers(),pid=worker_rank())
+    split_product_across_processors((1:num_tasks,),np,pid)
 end
 
-function split_product_across_processors(arrs_tuple::Tuple,
-	num_procs::Integer=nworkers(),proc_id::Integer=worker_rank())
+function split_product_across_processors(iterators::Tuple,
+	np::Integer=nworkers(),pid::Integer=worker_rank())
 	
-	ProductSplit(arrs_tuple,num_procs,proc_id)
+	ProductSplit(iterators,np,pid)
 end
 
-function get_processor_id_from_split_array(arr₁::AbstractVector,arr₂::AbstractVector,
-	(arr₁_value,arr₂_value)::Tuple,num_procs::Integer)
-	# Find the closest match in arrays
-
-	if (arr₁_value ∉ arr₁) || (arr₂_value ∉ arr₂)
-		return nothing # invalid
-	end
+function get_processor_id_from_split_array(iterators::Tuple,val::Tuple,np::Int)
 	
-	num_tasks = length(arr₁)*length(arr₂);
+	_infullrange(val,iterators) || return nothing
 
-	a1_match_index = searchsortedfirst(arr₁,arr₁_value)
-	a2_match_index = searchsortedfirst(arr₂,arr₂_value)
+	# We may carry out a binary search as the iterators are sorted
+	left,right = 1,np
 
-	num_tasks_per_process,num_tasks_leftover = div(num_tasks,num_procs),mod(num_tasks,num_procs)
+	while left <= right
+		mid = floor(Int,(left+right)/2)
+		ps = ProductSplit(iterators,np,mid)
 
-	proc_id = 1
-	num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
-	total_tasks_till_proc_id = num_tasks_on_proc
-
-	task_no = 0
-
-	for (ind2,a2) in enumerate(arr₂), (ind1,a1) in enumerate(arr₁)
-		
-		task_no +=1
-		if task_no > total_tasks_till_proc_id
-			proc_id += 1
-			num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
-			total_tasks_till_proc_id += num_tasks_on_proc
-		end
-
-		if ind2< a2_match_index
-			continue
-		end
-
-		if (ind2 == a2_match_index) && (ind1 == a1_match_index)
-			break
+		if LittleEndianTuple(val) < LittleEndianTuple(first(ps))
+			right = mid - 1
+		elseif LittleEndianTuple(val) > LittleEndianTuple(last(ps))
+			left = mid + 1
+		else
+			return mid
 		end
 	end
 
-	return proc_id
-end
-
-function get_processor_id_from_split_array(iterators,val,num_procs)
-	for proc_id in 1:num_procs
-		tasks_on_proc = split_product_across_processors(iterators,num_procs,proc_id)
-		if val ∈ tasks_on_proc
-			return proc_id
-		end
-	end
 	return nothing
 end
 
-function get_processor_id_from_split_array(iter::ProductSplit{T},val::T) where {T}
-	get_processor_id_from_split_array(iter.iterators_product,val,iter.num_procs)
-end
-
-function get_processor_range_from_split_array(iter,vals,num_procs::Integer)
+# This function is necessary when you're changing np
+function get_processor_range_from_split_array(ps::ProductSplit,np_new::Int)
 	
-	if isempty(vals)
+	if length(ps)==0
 		return 0:-1 # empty range
 	end
 
-	first_task = first(vals) 
-	proc_id_start = get_processor_id_from_split_array(iter,first_task,num_procs)
-
-	last_task = first_task
-	if length(vals) == 1
-		return proc_id_start:proc_id_start
+	pid_start = get_processor_id_from_split_array(ps.iterators,first(ps),np_new)
+	if length(ps) == 1
+		return pid_start:pid_start
 	end
 
-	for t in vals
-		last_task = t
-	end
-
-	proc_id_end = get_processor_id_from_split_array(iter,last_task,num_procs)
-	return proc_id_start:proc_id_end
+	pid_end = get_processor_id_from_split_array(ps.iterators,last(ps),np_new)
+	return pid_start:pid_end
 end
 
-function get_processor_range_from_split_array(iter::ProductSplit{T},val::T) where {T}
-	get_processor_range_from_split_array(iter.iterators_product,val,iterators.num_procs)
-end
+function get_index_in_split_array(ps::ProductSplit{T},val::T) where {T}
+	# Can carry out a binary search
 
-get_processor_range_from_split_array(arr₁::AbstractVector,arr₂::AbstractVector,
-	vals,num_procs::Integer) =
-	get_processor_range_from_split_array(Iterators.product(arr₁,arr₂),
-		vals,num_procs)
+	(length(ps) == 0 || val ∉ ps) && return nothing
 
-function get_index_in_split_array(iter_section,val::Tuple)
-	if isnothing(iter_section)
-		return nothing
-	end
-	for (ind,val_ind) in enumerate(iter_section)
-		if val_ind == val
-			return ind
+	left,right = 1,length(ps)
+
+	val == first(ps) && return left
+	val == last(ps) && return right
+
+	while left <= right
+		mid = floor(Int,(left+right)/2)
+		val_mid = @inbounds ps[mid]
+
+		if LittleEndianTuple(val) < LittleEndianTuple(val_mid)
+			right = mid - 1
+		elseif LittleEndianTuple(val) > LittleEndianTuple(val_mid)
+			left = mid + 1
+		else
+			return mid
 		end
 	end
-	nothing
+	
+	return nothing
 end
 
 function procid_and_mode_index(arr₁::AbstractVector,arr₂::AbstractVector,
-	(arr₁_value,arr₂_value)::Tuple,num_procs::Integer)
-	proc_id_mode = get_processor_id_from_split_array(arr₁,arr₂,(arr₁_value,arr₂_value),num_procs)
-	modes_in_procid_file = split_product_across_processors(arr₁,arr₂,num_procs,proc_id_mode)
+	(arr₁_value,arr₂_value)::Tuple,np::Integer)
+	pid_mode = get_processor_id_from_split_array(arr₁,arr₂,(arr₁_value,arr₂_value),np)
+	modes_in_procid_file = split_product_across_processors(arr₁,arr₂,np,pid_mode)
 	mode_index = get_index_in_split_array(modes_in_procid_file,(arr₁_value,arr₂_value))
-	return proc_id_mode,mode_index
+	return pid_mode,mode_index
 end
 
-function procid_and_mode_index(iter,val::Tuple,num_procs::Integer)
-
-	proc_id_mode = get_processor_id_from_split_array(iter,val,num_procs)
-	modes_in_procid_file = split_across_processors(iter,num_procs,proc_id_mode)
+function procid_and_mode_index(iterators::Tuple,val::Tuple,np::Integer)
+	pid_mode = get_processor_id_from_split_array(iterators,val,np)
+	modes_in_procid_file = split_across_processors(iterators,np,pid_mode)
 	mode_index = get_index_in_split_array(modes_in_procid_file,val)
-	return proc_id_mode,mode_index
+	return pid_mode,mode_index
 end
 
 function mode_index_in_file(arr₁::AbstractVector,arr₂::AbstractVector,
-	(arr₁_value,arr₂_value)::Tuple,num_procs::Integer,proc_id_mode::Integer)
+	(arr₁_value,arr₂_value)::Tuple,np::Integer,pid_mode::Integer)
 
-	modes_in_procid_file = split_product_across_processors(arr₁,arr₂,num_procs,proc_id_mode)
+	modes_in_procid_file = split_product_across_processors(arr₁,arr₂,np,pid_mode)
 	mode_index = get_index_in_split_array(modes_in_procid_file,(arr₁_value,arr₂_value))
 end
 
 function procid_allmodes(arr₁::AbstractVector,arr₂::AbstractVector,
-	iter,num_procs=nworkers_active(arr₁,arr₂))
+	iter,np=nworkers_active(arr₁,arr₂))
 	procid = zeros(Int64,length(iter))
 	for (ind,mode) in enumerate(iter)
-		procid[ind] = get_processor_id_from_split_array(arr₁,arr₂,mode,num_procs)
+		procid[ind] = get_processor_id_from_split_array(arr₁,arr₂,mode,np)
 	end
 	return procid
 end
