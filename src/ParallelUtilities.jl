@@ -3,13 +3,13 @@ module ParallelUtilities
 using Reexport
 @reexport using Distributed
 
-export ProductSplit,split_across_processors,split_product_across_processors,
-get_pid_of_split_array,get_pid_range_of_split_array,pid_range,
-get_index_in_split_array,pid_and_index,
-extrema_from_split_array,extrema_common_lastdim,
-workers_active,nworkers_active,worker_rank,
-pmapsum,pmapreduce,pmap_onebatch_per_worker,
-get_nodes,get_hostnames,get_nprocs_node
+export ProductSplit,evenlyscatterproduct,evenlyscatterproduct,
+whichproc,newprocrange,whichproc,procidrange,
+indexinsplitproduct,procid_and_index,
+extremadims,extrema_commonlastdim,
+workersactive,nworkersactive,workerrank,
+pmapsum,pmapreduce,pmap_onebatchperworker,
+getnodes,gethostnames,getnprocs_node
 
 # The fundamental iterator that behaves like an Iterator.ProductIterator
 
@@ -17,16 +17,22 @@ struct ProcessorNumberError <: Exception
 	p :: Int
 	np :: Int
 end
-
-function Base.showerror(io::IO,p::ProcessorNumberError)
-	print(io,"Processor id $(p.p) does not line in the range $(1:p.np)")
+function Base.showerror(io::IO,err::ProcessorNumberError)
+	print(io,"processor id $(err.p) does not line in the range $(1:err.np)")
 end
 
 struct DecreasingIteratorError <: Exception 
 end
+function Base.showerror(io::IO,err::DecreasingIteratorError)
+	print(io,"all the iterators need to be strictly increasing")
+end
 
-function Base.showerror(io::IO,p::DecreasingIteratorError)
-	print(io,"All the iterators need to be strictly increasing")
+struct BoundsErrorPS{T}
+	ps :: T
+	ind :: Int
+end
+function Base.showerror(io::IO,err::BoundsErrorPS)
+	print(io,"attempt to access $(length(err.ps))-element ProductSplit at index $(err.ind)")
 end
 
 struct ProductSplit{T,N,Q}
@@ -43,7 +49,7 @@ struct ProductSplit{T,N,Q}
 		1 <= p <= np || throw(ProcessorNumberError(p,np))
 		T = NTuple{N,eltype(Q)}
 
-		# Check to make sure that all the iterators are increasing
+		# Ensure that all the iterators are strictly increasing
 		all(x->step(x)>0,iterators) || throw(DecreasingIteratorError())
 
 		new{T,N,Q}(iterators,togglelevels,np,p,firstind,lastind)
@@ -60,7 +66,7 @@ function _cumprod(n::Int,tl::Tuple)
 	(n,_cumprod(n*first(tl),Base.tail(tl))...)
 end
 
-function ProductSplit(iterators::NTuple{N,Q},np,p) where {N,Q}
+function ProductSplit(iterators::NTuple{N,Q},np::Int,p::Int) where {N,Q<:AbstractRange}
 	T = NTuple{N,eltype(Q)}
 	len = Base.Iterators._prod_size(iterators)
 	Nel = prod(len)
@@ -70,21 +76,25 @@ function ProductSplit(iterators::NTuple{N,Q},np,p) where {N,Q}
 	lastind = d*p + min(r,p)
 	ProductSplit(iterators,togglelevels,np,p,firstind,lastind)
 end
+ProductSplit(::Tuple{},::Int,::Int) = throw(ArgumentError("Need at least one iterator"))
 
-@inline Base.@propagate_inbounds Base.first(p::ProductSplit) = 
-	_first(p.iterators,childindex(p,p.firstind)...)
-	
-@inline function _first(t::Tuple,ind::Int,rest::Int...)
+Base.isempty(ps::ProductSplit) = (ps.firstind > ps.lastind)
+
+@inline Base.@propagate_inbounds function Base.first(ps::ProductSplit)
+	isempty(ps) ? nothing : _first(ps.iterators,childindex(ps,ps.firstind)...)
+end
+
+@inline Base.@propagate_inbounds function _first(t::Tuple,ind::Int,rest::Int...)
 	@boundscheck (1 <= ind <= length(first(t))) || throw(BoundsError(first(t),ind))
 	(@inbounds first(t)[ind],_first(Base.tail(t),rest...)...)
 end
 @inline _first(::Tuple{},rest...) = ()
 
-@inline Base.length(p::ProductSplit) = p.lastind - p.firstind + 1
-@inline Base.lastindex(p::ProductSplit) = p.lastind - p.firstind + 1
+@inline Base.length(ps::ProductSplit) = ps.lastind - ps.firstind + 1
+@inline Base.lastindex(ps::ProductSplit) = ps.lastind - ps.firstind + 1
 
-@inline function childindex(p::ProductSplit,ind::Int)
-	tl = reverse(Base.tail(p.togglelevels))
+@inline function childindex(ps::ProductSplit,ind::Int)
+	tl = reverse(Base.tail(ps.togglelevels))
 	reverse(childindex(tl,ind))
 end
 
@@ -97,45 +107,46 @@ end
 # First iterator gets the final remainder
 @inline childindex(::Tuple{},ind::Int) = (ind,)
 
-@inline childindexshifted(p::ProductSplit,ind::Int) = childindex(p, (ind - 1) + p.firstind)
+@inline childindexshifted(ps::ProductSplit,ind::Int) = childindex(ps, (ind - 1) + ps.firstind)
 
-@inline Base.@propagate_inbounds function Base.getindex(p::ProductSplit,ind::Int)
-	_getindex(p,childindexshifted(p, ind)...)
+@inline Base.@propagate_inbounds function Base.getindex(ps::ProductSplit,ind::Int)
+	@boundscheck 1 <= ind <= length(ps) || throw(BoundsErrorPS(ps,ind))
+	_getindex(ps,childindexshifted(ps, ind)...)
 end
 # This needs to be a separate function to deal with the case of a single child iterator, in which case 
 # it's not clear if the single index is for the ProductSplit or the child iterator
 
 # This method asserts that the number of indices are correct
-@inline Base.@propagate_inbounds function _getindex(p::ProductSplit{<:Any,N},
+@inline Base.@propagate_inbounds function _getindex(ps::ProductSplit{<:Any,N},
 	inds::Vararg{Int,N}) where {N}
 	
-	_getindex(p.iterators,inds...)
+	_getindex(ps.iterators,inds...)
 end
 
-@inline function _getindex(p::Tuple,ind::Int,rest::Int...)
-	@boundscheck (1 <= ind <= length(first(p))) || throw(BoundsError(first(p),ind))
-	(@inbounds first(p)[ind],_getindex(Base.tail(p),rest...)...)
+@inline function _getindex(t::Tuple,ind::Int,rest::Int...)
+	@boundscheck (1 <= ind <= length(first(t))) || throw(BoundsError(first(t),ind))
+	(@inbounds first(t)[ind],_getindex(Base.tail(t),rest...)...)
 end
 @inline _getindex(::Tuple{},rest::Int...) = ()
 
-function Base.iterate(p::ProductSplit,state=(first(p),1))
+function Base.iterate(ps::ProductSplit,state=(first(ps),1))
 	el,n = state
 
-	if n > length(p)
+	if n > length(ps)
 		return nothing
-	elseif n == length(p)
+	elseif n == length(ps)
 		# In this case the next value doesn't matter, so just return something arbitary
-		return (el,(p[1],n+1))
+		return (el,(first(ps),n+1))
 	end
 
-	(el,(p[n+1],n+1))
+	(el,(ps[n+1],n+1))
 end
 
-@inline Base.@propagate_inbounds function _firstlastalongdim(p::ProductSplit{<:Any,N},dim::Int,
-	firstindchild::Tuple=childindex(p,p.firstind),
-	lastindchild::Tuple=childindex(p,p.lastind)) where {N}
+@inline Base.@propagate_inbounds function _firstlastalongdim(pss::ProductSplit{<:Any,N},dim::Int,
+	firstindchild::Tuple=childindex(ps,ps.firstind),
+	lastindchild::Tuple=childindex(ps,ps.lastind)) where {N}
 
-	_firstlastalongdim(p.iterators,dim,firstindchild,lastindchild)
+	_firstlastalongdim(pss.iterators,dim,firstindchild,lastindchild)
 end
 
 @inline Base.@propagate_inbounds function _firstlastalongdim(iterators::NTuple{N,<:Any},dim::Int,
@@ -154,11 +165,11 @@ end
 	(first_iter,last_iter)
 end
 
-function _checkrollover(p::ProductSplit{<:Any,N},dim::Int,
-	firstindchild::Tuple=childindex(p,p.firstind),
-	lastindchild::Tuple=childindex(p,p.lastind)) where {N}
+function _checkrollover(ps::ProductSplit{<:Any,N},dim::Int,
+	firstindchild::Tuple=childindex(ps,ps.firstind),
+	lastindchild::Tuple=childindex(ps,ps.lastind)) where {N}
 
-	_checkrollover(p.iterators,dim,firstindchild,lastindchild)
+	_checkrollover(ps.iterators,dim,firstindchild,lastindchild)
 end
 
 function _checkrollover(t::NTuple{N,<:Any},dim::Int,
@@ -181,22 +192,22 @@ function _checknorollover(t,firstindchild,lastindchild)
 end
 _checknorollover(::Tuple{},::Tuple{},::Tuple{}) = true
 
-@inline function Base.maximum(p::ProductSplit{<:Any,1},dim::Int=1)
-	@boundscheck (dim > 1) && throw(BoundsError(p.iterators,dim))
-	lastindchild = childindex(p,p.lastind)
+@inline function Base.maximum(ps::ProductSplit{<:Any,1},dim::Int=1)
+	@boundscheck (dim > 1) && throw(BoundsError(ps.iterators,dim))
+	lastindchild = childindex(ps,ps.lastind)
 	@inbounds lic_dim = lastindchild[1]
-	@inbounds iter = p.iterators[1]
+	@inbounds iter = ps.iterators[1]
 	iter[lic_dim]
 end
 
-@inline function Base.maximum(p::ProductSplit{<:Any,N},dim::Int) where {N}
+@inline function Base.maximum(ps::ProductSplit{<:Any,N},dim::Int) where {N}
 
-	@boundscheck (1 <= dim <= N) || throw(BoundsError(p.iterators,dim))
+	@boundscheck (1 <= dim <= N) || throw(BoundsError(ps.iterators,dim))
 	
-	firstindchild = childindex(p,p.firstind)
-	lastindchild = childindex(p,p.lastind)
+	firstindchild = childindex(ps,ps.firstind)
+	lastindchild = childindex(ps,ps.lastind)
 
-	@inbounds first_iter,last_iter = _firstlastalongdim(p,dim,firstindchild,lastindchild)
+	@inbounds first_iter,last_iter = _firstlastalongdim(ps,dim,firstindchild,lastindchild)
 
 	v = last_iter
 
@@ -205,30 +216,30 @@ end
 		return v
 	end
 
-	if _checkrollover(p,dim,firstindchild,lastindchild)
-		iter = @inbounds p.iterators[dim]
+	if _checkrollover(ps,dim,firstindchild,lastindchild)
+		iter = @inbounds ps.iterators[dim]
 		v = maximum(iter)
 	end
 
 	return v
 end
 
-@inline function Base.minimum(p::ProductSplit{<:Any,1},dim::Int=1)
-	@boundscheck (dim > 1) && throw(BoundsError(p.iterators,dim))
-	firstindchild = childindex(p,p.firstind)
+@inline function Base.minimum(ps::ProductSplit{<:Any,1},dim::Int=1)
+	@boundscheck (dim > 1) && throw(BoundsError(ps.iterators,dim))
+	firstindchild = childindex(ps,ps.firstind)
 	@inbounds fic_dim = firstindchild[1]
-	@inbounds iter = p.iterators[1]
+	@inbounds iter = ps.iterators[1]
 	iter[fic_dim]
 end
 
-@inline function Base.minimum(p::ProductSplit{<:Any,N},dim::Int) where {N}
+@inline function Base.minimum(ps::ProductSplit{<:Any,N},dim::Int) where {N}
 	
-	@boundscheck (1 <= dim <= N) || throw(BoundsError(p.iterators,dim))
+	@boundscheck (1 <= dim <= N) || throw(BoundsError(ps.iterators,dim))
 
-	firstindchild = childindex(p,p.firstind)
-	lastindchild = childindex(p,p.lastind)
+	firstindchild = childindex(ps,ps.firstind)
+	lastindchild = childindex(ps,ps.lastind)
 
-	@inbounds first_iter,last_iter = _firstlastalongdim(p,dim,firstindchild,lastindchild)
+	@inbounds first_iter,last_iter = _firstlastalongdim(ps,dim,firstindchild,lastindchild)
 
 	v = first_iter
 
@@ -237,33 +248,33 @@ end
 		return v
 	end
 
-	if _checkrollover(p,dim,firstindchild,lastindchild)
-		iter = @inbounds p.iterators[dim]
+	if _checkrollover(ps,dim,firstindchild,lastindchild)
+		iter = @inbounds ps.iterators[dim]
 		v = minimum(iter)
 	end
 
 	return v
 end
 
-@inline function Base.extrema(p::ProductSplit{<:Any,1},dim::Int=1)
-	@boundscheck (dim > 1) && throw(BoundsError(p.iterators,dim))
-	firstindchild = childindex(p,p.firstind)
-	lastindchild = childindex(p,p.lastind)
+@inline function Base.extrema(ps::ProductSplit{<:Any,1},dim::Int=1)
+	@boundscheck (dim > 1) && throw(BoundsError(ps.iterators,dim))
+	firstindchild = childindex(ps,ps.firstind)
+	lastindchild = childindex(ps,ps.lastind)
 	@inbounds fic_dim = firstindchild[1]
 	@inbounds lic_dim = lastindchild[1]
-	@inbounds iter = p.iterators[1]
+	@inbounds iter = ps.iterators[1]
 	
 	(iter[fic_dim],iter[lic_dim])
 end
 
-@inline function Base.extrema(p::ProductSplit{<:Any,N},dim::Int) where {N}
+@inline function Base.extrema(ps::ProductSplit{<:Any,N},dim::Int) where {N}
 	
-	@boundscheck (1 <= dim <= N) || throw(BoundsError(p.iterators,dim))
+	@boundscheck (1 <= dim <= N) || throw(BoundsError(ps.iterators,dim))
 
-	firstindchild = childindex(p,p.firstind)
-	lastindchild = childindex(p,p.lastind)
+	firstindchild = childindex(ps,ps.firstind)
+	lastindchild = childindex(ps,ps.lastind)
 
-	@inbounds first_iter,last_iter = _firstlastalongdim(p,dim,firstindchild,lastindchild)
+	@inbounds first_iter,last_iter = _firstlastalongdim(ps,dim,firstindchild,lastindchild)
 
 	v = (first_iter,last_iter)
 	# The last index will not roll over so this can be handled easily
@@ -271,157 +282,25 @@ end
 		return v
 	end
 
-	if _checkrollover(p,dim,firstindchild,lastindchild)
-		iter = @inbounds p.iterators[dim]
+	if _checkrollover(ps,dim,firstindchild,lastindchild)
+		iter = @inbounds ps.iterators[dim]
 		v = extrema(iter)
 	end
 
 	return v
 end
 
-_infullrange(val::T,p::ProductSplit{T}) where {T} = _infullrange(val,p.iterators)
-
-function _infullrange(val,t::Tuple)
-	first(val) in first(t) && _infullrange(Base.tail(val),Base.tail(t))
-end
-_infullrange(::Tuple{},::Tuple{}) = true
-
-# This struct is just a wrapper to flip the tuples before comparing
-struct LittleEndianTuple{T}
-	t :: T
+function extremadims(ps::ProductSplit)
+	_extremadims(ps,1,ps.iterators)
 end
 
-Base.isless(a::LittleEndianTuple{T},b::LittleEndianTuple{T}) where {T} = reverse(a.t) < reverse(b.t)
-Base.isequal(a::LittleEndianTuple{T},b::LittleEndianTuple{T}) where {T} = a.t == b.t
-
-function Base.in(val::T,p::ProductSplit{T}) where {T}
-	_infullrange(val,p) || return false
-	
-	val_lt = LittleEndianTuple(val)
-	first_iter = LittleEndianTuple(p[1])
-	last_iter = LittleEndianTuple(p[end])
-
-	first_iter <= val_lt <= last_iter
+function _extremadims(ps::ProductSplit,dim::Int,iterators::Tuple)
+	(extrema(ps,dim),_extremadims(ps,dim+1,Base.tail(iterators))...)
 end
+_extremadims(::ProductSplit,::Int,::Tuple{}) = ()
 
-###################################################################################################
-
-function worker_rank()
-	if nworkers()==1
-		return 1
-	end
-	myid()-minimum(workers())+1
-end
-
-function split_across_processors(num_tasks::Integer,np=nworkers(),pid=worker_rank())
-    split_product_across_processors((1:num_tasks,),np,pid)
-end
-
-function split_product_across_processors(iterators::Tuple,
-	np::Integer=nworkers(),pid::Integer=worker_rank())
-	
-	ProductSplit(iterators,np,pid)
-end
-
-function get_pid_of_split_array(iterators::Tuple,val::Tuple,np::Int)
-	
-	_infullrange(val,iterators) || return nothing
-
-	# We may carry out a binary search as the iterators are sorted
-	left,right = 1,np
-
-	while left <= right
-		mid = floor(Int,(left+right)/2)
-		ps = ProductSplit(iterators,np,mid)
-
-		if LittleEndianTuple(val) < LittleEndianTuple(first(ps))
-			right = mid - 1
-		elseif LittleEndianTuple(val) > LittleEndianTuple(last(ps))
-			left = mid + 1
-		else
-			return mid
-		end
-	end
-
-	return nothing
-end
-
-# This function is necessary when you're changing np
-function get_pid_range_of_split_array(ps::ProductSplit,np_new::Int)
-	
-	if length(ps)==0
-		return 0:-1 # empty range
-	end
-
-	pid_start = get_pid_of_split_array(ps.iterators,first(ps),np_new)
-	if length(ps) == 1
-		return pid_start:pid_start
-	end
-
-	pid_end = get_pid_of_split_array(ps.iterators,last(ps),np_new)
-	return pid_start:pid_end
-end
-
-function get_index_in_split_array(ps::ProductSplit{T},val::T) where {T}
-	# Can carry out a binary search
-
-	(length(ps) == 0 || val ∉ ps) && return nothing
-
-	left,right = 1,length(ps)
-
-	val == first(ps) && return left
-	val == last(ps) && return right
-
-	while left <= right
-		mid = floor(Int,(left+right)/2)
-		val_mid = @inbounds ps[mid]
-
-		if LittleEndianTuple(val) < LittleEndianTuple(val_mid)
-			right = mid - 1
-		elseif LittleEndianTuple(val) > LittleEndianTuple(val_mid)
-			left = mid + 1
-		else
-			return mid
-		end
-	end
-	
-	return nothing
-end
-
-function get_index_in_split_array(iterators::Tuple,val::Tuple,np::Integer,pid::Integer)
-	ps = split_product_across_processors(iterators,np,pid)
-	get_index_in_split_array(ps,val)
-end
-
-function pid_and_index(iterators::Tuple,val::Tuple,np::Integer)
-	pid = get_pid_of_split_array(iterators,val,np)
-	index = get_index_in_split_array(iterators,val,np,pid)
-	return pid,index
-end
-
-function pid_range(iterators::Tuple,vals::Tuple,np::Int)
-	pid_first = get_pid_of_split_array(iterators,first(vals),np)
-	(pid_first,pid_range(iterators,Base.tail(vals),np)...)
-end
-pid_range(::Tuple,::Tuple{},::Int) = ()
-
-workers_active(arr) = workers()[1:min(length(arr),nworkers())]
-
-workers_active(arrs...) = workers_active(Iterators.product(arrs...))
-
-nworkers_active(args...) = length(workers_active(args...))
-
-function extrema_from_split_array(ps::ProductSplit)
-	_extrema_from_split_array(ps,1,ps.iterators)
-end
-
-function _extrema_from_split_array(ps::ProductSplit,dim::Int,iterators::Tuple)
-	(extrema(ps,dim),_extrema_from_split_array(ps,dim+1,Base.tail(iterators))...)
-end
-_extrema_from_split_array(::ProductSplit,::Int,::Tuple{}) = ()
-
-function extrema_common_lastdim(ps::ProductSplit{<:Any,N}) where {N}
-	m = extrema_from_split_array(ps)
+function extrema_commonlastdim(ps::ProductSplit{<:Any,N}) where {N}
+	m = extremadims(ps)
 	lastvar_min = last(m)[1]
 	lastvar_max = last(m)[2]
 
@@ -448,7 +327,135 @@ function extrema_common_lastdim(ps::ProductSplit{<:Any,N}) where {N}
 	[(m,lastvar_min) for m in min_vals],[(m,lastvar_max) for m in max_vals]
 end
 
-function get_hostnames(procs_used=workers())
+_infullrange(val::T,ps::ProductSplit{T}) where {T} = _infullrange(val,ps.iterators)
+
+function _infullrange(val,t::Tuple)
+	first(val) in first(t) && _infullrange(Base.tail(val),Base.tail(t))
+end
+_infullrange(::Tuple{},::Tuple{}) = true
+
+# This struct is just a wrapper to flip the tuples before comparing
+struct LittleEndianTuple{T}
+	t :: T
+end
+
+Base.isless(a::LittleEndianTuple{T},b::LittleEndianTuple{T}) where {T} = reverse(a.t) < reverse(b.t)
+Base.isequal(a::LittleEndianTuple{T},b::LittleEndianTuple{T}) where {T} = a.t == b.t
+
+function Base.in(val::T,ps::ProductSplit{T}) where {T}
+	_infullrange(val,ps) || return false
+	
+	val_lt = LittleEndianTuple(val)
+	first_iter = LittleEndianTuple(ps[1])
+	last_iter = LittleEndianTuple(ps[end])
+
+	first_iter <= val_lt <= last_iter
+end
+
+###################################################################################################
+
+function workerrank()
+	rank = 1
+	if myid() in workers()
+		rank = myid()-minimum(workers())+1
+	end
+	return rank
+end
+
+function evenlyscatterproduct(num_tasks::Integer,np=nworkers(),procid=workerrank())
+    evenlyscatterproduct((1:num_tasks,),np,procid)
+end
+
+function evenlyscatterproduct(iterators::Tuple,
+	np::Integer=nworkers(),procid::Integer=workerrank())
+	
+	ProductSplit(iterators,np,procid)
+end
+
+function whichproc(iterators::Tuple,val::Tuple,np::Int)
+	
+	_infullrange(val,iterators) || return nothing
+
+	# We may carry out a binary search as the iterators are sorted
+	left,right = 1,np
+
+	while left <= right
+		mid = floor(Int,(left+right)/2)
+		ps = ProductSplit(iterators,np,mid)
+
+		if LittleEndianTuple(val) < LittleEndianTuple(first(ps))
+			right = mid - 1
+		elseif LittleEndianTuple(val) > LittleEndianTuple(last(ps))
+			left = mid + 1
+		else
+			return mid
+		end
+	end
+
+	return nothing
+end
+
+# This function is necessary when we're changing np
+function newprocrange(ps::ProductSplit,np_new::Int)
+	
+	if isempty(ps)
+		return 0:-1 # empty range
+	end
+
+	procid_start = whichproc(ps.iterators,first(ps),np_new)
+	if length(ps) == 1
+		procid_end = procid_start
+	else
+		procid_end = whichproc(ps.iterators,last(ps),np_new)
+	end
+	
+	return procid_start:procid_end
+end
+
+function indexinsplitproduct(ps::ProductSplit{T},val::T) where {T}
+	# Can carry out a binary search
+
+	(isempty(ps) || val ∉ ps) && return nothing
+
+	left,right = 1,length(ps)
+
+	val == first(ps) && return left
+	val == last(ps) && return right
+
+	while left <= right
+		mid = floor(Int,(left+right)/2)
+		val_mid = @inbounds ps[mid]
+
+		if LittleEndianTuple(val) < LittleEndianTuple(val_mid)
+			right = mid - 1
+		elseif LittleEndianTuple(val) > LittleEndianTuple(val_mid)
+			left = mid + 1
+		else
+			return mid
+		end
+	end
+	
+	return nothing
+end
+
+function indexinsplitproduct(iterators::Tuple,val::Tuple,np::Integer,procid::Integer)
+	ps = evenlyscatterproduct(iterators,np,procid)
+	indexinsplitproduct(ps,val)
+end
+
+function procid_and_index(iterators::Tuple,val::Tuple,np::Integer)
+	procid = whichproc(iterators,val,np)
+	index = indexinsplitproduct(iterators,val,np,procid)
+	return procid,index
+end
+
+workersactive(arr) = workers()[1:min(length(arr),nworkers())]
+
+workersactive(arrs...) = workersactive(Iterators.product(arrs...))
+
+nworkersactive(args...) = length(workersactive(args...))
+
+function gethostnames(procs_used=workers())
 	hostnames = Vector{String}(undef,length(procs_used))
 	@sync for (ind,p) in enumerate(procs_used)
 		@async hostnames[ind] = @fetchfrom p Libc.gethostname()
@@ -456,38 +463,38 @@ function get_hostnames(procs_used=workers())
 	return hostnames
 end
 
-get_nodes(hostnames::Vector{String}) = unique(hostnames)
-get_nodes(procs_used::Vector{<:Integer}=workers()) = get_nodes(get_hostnames(procs_used))
+getnodes(hostnames::Vector{String}) = unique(hostnames)
+getnodes(procs_used::Vector{<:Integer}=workers()) = getnodes(gethostnames(procs_used))
 
-function get_nprocs_node(hostnames::Vector{String})
-	nodes = get_nodes(hostnames)
-	get_nprocs_node(hostnames,nodes)	
+function getnprocs_node(hostnames::Vector{String})
+	nodes = getnodes(hostnames)
+	getnprocs_node(hostnames,nodes)	
 end
 
-function get_nprocs_node(hostnames::Vector{String},nodes::Vector{String})
+function getnprocs_node(hostnames::Vector{String},nodes::Vector{String})
 	Dict(node=>count(isequal(node),hostnames) for node in nodes)
 end
 
-get_nprocs_node(procs_used::Vector{<:Integer}=workers()) = get_nprocs_node(get_hostnames(procs_used))
+getnprocs_node(procs_used::Vector{<:Integer}=workers()) = getnprocs_node(gethostnames(procs_used))
 
 # This function does not sort the values, so it might be faster
-function pmapsum_remotechannel(::Type{T},f::Function,iterable,args...;kwargs...) where {T}
+function pmapsum(::Type{T},f::Function,iterable,args...;kwargs...) where {T}
 
-	procs_used = workers_active(iterable)
+	procs_used = workersactive(iterable)
 
 	num_workers = length(procs_used);
-	hostnames = get_hostnames(procs_used);
-	nodes = get_nodes(hostnames);
-	pid_rank0_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
+	hostnames = gethostnames(procs_used);
+	nodes = getnodes(hostnames);
+	procid_rank0_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
 
-	nprocs_node = get_nprocs_node(procs_used)
-	node_channels = Dict(node=>RemoteChannel(()->Channel{T}(nprocs_node[node]),pid_node)
-		for (node,pid_node) in zip(nodes,pid_rank0_on_node))
+	nprocs_node = getnprocs_node(procs_used)
+	node_channels = Dict(node=>RemoteChannel(()->Channel{T}(nprocs_node[node]),procid_node)
+		for (node,procid_node) in zip(nodes,procid_rank0_on_node))
 
 	# Worker at which final reduction takes place
-	p_final = first(pid_rank0_on_node)
+	p_final = first(procid_rank0_on_node)
 
-	sum_channel = RemoteChannel(()->Channel{T}(length(pid_rank0_on_node)),p_final)
+	sum_channel = RemoteChannel(()->Channel{T}(length(procid_rank0_on_node)),p_final)
 	result = nothing
 
 	# Run the function on each processor and compute the sum at each node
@@ -497,11 +504,11 @@ function pmapsum_remotechannel(::Type{T},f::Function,iterable,args...;kwargs...)
 			node_remotechannel = node_channels[node]
 			np_node = nprocs_node[node]
 			
-			iterable_on_proc = split_across_processors(iterable,num_workers,rank)
+			iterable_on_proc = evenlyscatterproduct(iterable,num_workers,rank)
 			@spawnat p put!(node_remotechannel,
 				f(iterable_on_proc,args...;kwargs...))
 
-			@async if p in pid_rank0_on_node
+			@async if p in procid_rank0_on_node
 				f = @spawnat p put!(sum_channel,
 					sum(take!(node_remotechannel) for i=1:np_node))
 				wait(f)
@@ -510,7 +517,7 @@ function pmapsum_remotechannel(::Type{T},f::Function,iterable,args...;kwargs...)
 
 			@async if p==p_final
 				result = @fetchfrom p_final sum(take!(sum_channel)
-					for i=1:length(pid_rank0_on_node))
+					for i=1:length(procid_rank0_on_node))
 				@spawnat p finalize(sum_channel)
 			end
 		end
@@ -519,30 +526,34 @@ function pmapsum_remotechannel(::Type{T},f::Function,iterable,args...;kwargs...)
 	return result :: T
 end
 
+function pmapsum(f::Function,iterable,args...;kwargs...)
+	pmapsum(Any,f,iterable,args...;kwargs...)
+end
+
 # Store the processor id with the value
 struct pval{T}
 	p :: Int
 	parent :: T
 end
 
-function pmapreduce_remotechannel(::Type{T},fmap::Function,freduce::Function,
+function pmapreduce(::Type{T},fmap::Function,freduce::Function,
 	iterable,args...;kwargs...) where {T}
 
-	procs_used = workers_active(iterable)
+	procs_used = workersactive(iterable)
 
 	num_workers = length(procs_used);
-	hostnames = get_hostnames(procs_used);
-	nodes = get_nodes(hostnames);
-	pid_rank0_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
+	hostnames = gethostnames(procs_used);
+	nodes = getnodes(hostnames);
+	procid_rank0_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
 
-	nprocs_node = get_nprocs_node(procs_used)
-	node_channels = Dict(node=>RemoteChannel(()->Channel{T}(nprocs_node[node]),pid_node)
-		for (node,pid_node) in zip(nodes,pid_rank0_on_node))
+	nprocs_node = getnprocs_node(procs_used)
+	node_channels = Dict(node=>RemoteChannel(()->Channel{T}(nprocs_node[node]),procid_node)
+		for (node,procid_node) in zip(nodes,procid_rank0_on_node))
 
 	# Worker at which final reduction takes place
-	p_final = first(pid_rank0_on_node)
+	p_final = first(procid_rank0_on_node)
 
-	reduce_channel = RemoteChannel(()->Channel{T}(length(pid_rank0_on_node)),p_final)
+	reduce_channel = RemoteChannel(()->Channel{T}(length(procid_rank0_on_node)),p_final)
 	result = nothing
 
 	# Run the function on each processor and compute the sum at each node
@@ -552,11 +563,11 @@ function pmapreduce_remotechannel(::Type{T},fmap::Function,freduce::Function,
 			node_remotechannel = node_channels[node]
 			np_node = nprocs_node[node]
 			
-			iterable_on_proc = split_across_processors(iterable,num_workers,rank)
+			iterable_on_proc = evenlyscatterproduct(iterable,num_workers,rank)
 			@spawnat p put!(node_remotechannel,
 				pval(p,fmap(iterable_on_proc,args...;kwargs...)))
 
-			@async if p in pid_rank0_on_node
+			@async if p in procid_rank0_on_node
 				f = @spawnat p begin 
 					vals = [take!(node_remotechannel) for i=1:np_node ]
 					sort!(vals,by=x->x.p)
@@ -568,7 +579,7 @@ function pmapreduce_remotechannel(::Type{T},fmap::Function,freduce::Function,
 
 			@async if p==p_final
 				result = @fetchfrom p_final begin
-					vals = [take!(reduce_channel) for i=1:length(pid_rank0_on_node)]
+					vals = [take!(reduce_channel) for i=1:length(procid_rank0_on_node)]
 					sort!(vals,by=x->x.p)
 					freduce(v.parent for v in vals)
 				end
@@ -580,36 +591,13 @@ function pmapreduce_remotechannel(::Type{T},fmap::Function,freduce::Function,
 	return result :: T
 end
 
-function pmapsum_remotechannel(f::Function,iterable,args...;kwargs...)
-	pmapsum_remotechannel(Any,f,iterable,args...;kwargs...)
+function pmapreduce(fmap::Function,freduce::Function,iterable,args...;kwargs...)
+	pmapreduce(Any,fmap,freduce,iterable,args...;kwargs...)
 end
 
-function pmapreduce_remotechannel(fmap::Function,freduce::Function,iterable,args...;kwargs...)
-	pmapreduce_remotechannel(Any,fmap,freduce,iterable,args...;kwargs...)
-end
+function pmap_onebatchperworker(f::Function,iterable,args...;kwargs...)
 
-function pmapsum_distributedfor(f::Function,iterable,args...;kwargs...)
-	@distributed (+) for i in 1:nworkers()
-		np = nworkers_active(iterable)
-		iter_proc = split_across_processors(iterable,np,i)
-		f(iter_proc,args...;kwargs...)
-	end
-end
-
-function pmapreduce_distributedfor(fmap::Function,freduce::Function,iterable,args...;kwargs...)
-	@distributed freduce for i in 1:nworkers()
-		np = nworkers_active(iterable)
-		iter_proc = split_across_processors(iterable,np,i)
-		fmap(iter_proc,args...;kwargs...)
-	end
-end
-
-pmapsum(args...;kwargs...) = pmapsum_remotechannel(args...;kwargs...)
-pmapreduce(args...;kwargs...) = pmapreduce_remotechannel(args...;kwargs...)
-
-function pmap_onebatch_per_worker(f::Function,iterable,args...;kwargs...)
-
-	procs_used = workers_active(iterable)
+	procs_used = workersactive(iterable)
 	num_workers = get(kwargs,:num_workers,length(procs_used))
 	if num_workers<length(procs_used)
 		procs_used = procs_used[1:num_workers]
@@ -619,7 +607,7 @@ function pmap_onebatch_per_worker(f::Function,iterable,args...;kwargs...)
 	futures = Vector{Future}(undef,num_workers)
 	@sync for (rank,p) in enumerate(procs_used)
 		@async begin
-			iterable_on_proc = split_across_processors(iterable,num_workers,rank)
+			iterable_on_proc = evenlyscatterproduct(iterable,num_workers,rank)
 			futures[rank] = @spawnat p f(iterable_on_proc,args...;kwargs...)
 		end
 	end
