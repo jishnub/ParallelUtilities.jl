@@ -252,10 +252,41 @@ end
 
 @testset "pmap and reduce" begin
 
+	@testset "pmap_onebatchperworker" begin
+		iterable = 1:nworkers()
+	    f_vec = pmap_onebatchperworker(x->myid(),iterable)
+	    @test fetch.(f_vec) == workers()
+	    f_vec = pmap_onebatchperworker(x->myid(),(iterable,))
+	    @test fetch.(f_vec) == workers()
+	    f_vec = pmap_onebatchperworker(x->myid(),(iterable,1:1))
+	    @test fetch.(f_vec) == workers()
+
+	    iterable = 1:nworkers()-1
+	    f_vec = pmap_onebatchperworker(x->myid(),iterable)
+	    @test fetch.(f_vec) == workersactive(iterable)
+
+	    iterable = 1:nworkers()
+	    f_vec = pmap_onebatchperworker(identity,iterable)
+	    res = [ProductSplit((iterable,),nworkersactive(iterable),p) for p=1:nworkersactive(iterable)]
+		@test fetch.(f_vec) == res
+	    
+	    iterable = 1:nworkers()
+	    f_vec = pmap_onebatchperworker(identity,iterable)
+	    res = [ProductSplit((iterable,),nworkers(),p) for p=1:nworkers()]
+		@test fetch.(f_vec) == res
+	    
+	    iterable = 1:2nworkers()
+	    f_vec = pmap_onebatchperworker(identity,iterable)
+	    res = [ProductSplit((iterable,),nworkersactive(iterable),p) for p=1:nworkersactive(iterable)]
+		@test fetch.(f_vec) == res
+	end
+
 	@testset "pmapsum" begin
 
 	    @testset "worker id" begin
 		    @test pmapsum(x->workerrank(),1:nworkers()) == sum(1:nworkers())
+		    @test pmapsum(x->workerrank(),(1:nworkers(),)) == sum(1:nworkers())
+		    @test pmapsum(x->workerrank(),(1:nworkers(),1:1)) == sum(1:nworkers())
 		    @test pmapsum(x->myid(),1:nworkers()) == sum(workers())
 	    end
 	    
@@ -284,6 +315,8 @@ end
 	@testset "pmapreduce" begin
 	    @testset "sum" begin
 		    @test pmapreduce(x->myid(),sum,1:nworkers()) == sum(workers())
+		    @test pmapreduce(x->myid(),sum,(1:nworkers(),)) == sum(workers())
+		    @test pmapreduce(x->myid(),sum,(1:nworkers(),1:1)) == sum(workers())
 		    @test pmapreduce(x->myid(),sum,1:nworkers()) == pmapsum(x->myid(),1:nworkers())
 	    end
 
@@ -303,7 +336,5 @@ end
 		end
 	end
 end
-
-
 
 rmprocs(workers())
