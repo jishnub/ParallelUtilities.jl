@@ -8,8 +8,8 @@ whichproc,newprocrange,whichproc,procidrange,
 indexinsplitproduct,procid_and_index,
 extremadims,extrema_commonlastdim,
 workersactive,nworkersactive,workerrank,
-pmapsum,pmapreduce,pmap_onebatchperworker,
-getnodes,gethostnames,getnprocs_node
+nodenames,gethostnames,nprocs_node,
+pmapsum,pmapreduce,pmap_onebatchperworker
 
 # The fundamental iterator that behaves like an Iterator.ProductIterator
 
@@ -65,6 +65,9 @@ _cumprod(::Int,::Tuple{}) = ()
 function _cumprod(n::Int,tl::Tuple)
 	(n,_cumprod(n*first(tl),Base.tail(tl))...)
 end
+
+@inline ntasks(tl::Tuple) = prod(map(length,tl))
+@inline ntasks(ps::ProductSplit) = ntasks(ps.iterators)
 
 function ProductSplit(iterators::NTuple{N,Q},np::Int,p::Int) where {N,Q<:AbstractRange}
 	T = NTuple{N,eltype(Q)}
@@ -354,14 +357,6 @@ end
 
 ###################################################################################################
 
-function workerrank()
-	rank = 1
-	if myid() in workers()
-		rank = myid()-minimum(workers())+1
-	end
-	return rank
-end
-
 function evenlyscatterproduct(num_tasks::Integer,np=nworkers(),procid=workerrank())
     evenlyscatterproduct((1:num_tasks,),np,procid)
 end
@@ -449,13 +444,26 @@ function procid_and_index(iterators::Tuple,val::Tuple,np::Integer)
 	return procid,index
 end
 
-workersactive(arr) = workers()[1:min(length(arr),nworkers())]
+function workerrank()
+	rank = 1
+	if myid() in workers()
+		rank = myid()-minimum(workers())+1
+	end
+	return rank
+end
 
-workersactive(arrs...) = workersactive(Iterators.product(arrs...))
+@inline function nworkersactive(iterators::Tuple)
+	nt = ntasks(iterators)
+	nw = nworkers()
+	nt <= nw ? nt : nw
+end
+@inline nworkersactive(ps::ProductSplit) = nworkersactive(ps.iterators)
+@inline nworkersactive(args...) = nworkersactive(args)
+@inline workersactive(iterators::Tuple) = workers()[1:nworkersactive(iterators)]
+@inline workersactive(ps::ProductSplit) = workersactive(ps.iterators)
+@inline workersactive(args...) = workersactive(args)
 
-nworkersactive(args...) = length(workersactive(args...))
-
-function gethostnames(procs_used=workers())
+function gethostnames(procs_used = workers())
 	hostnames = Vector{String}(undef,length(procs_used))
 	@sync for (ind,p) in enumerate(procs_used)
 		@async hostnames[ind] = @fetchfrom p Libc.gethostname()
@@ -463,32 +471,36 @@ function gethostnames(procs_used=workers())
 	return hostnames
 end
 
-getnodes(hostnames::Vector{String}) = unique(hostnames)
-getnodes(procs_used::Vector{<:Integer}=workers()) = getnodes(gethostnames(procs_used))
+nodenames(hostnames::Vector{String}) = unique(hostnames)
+nodenames(procs_used::Vector{<:Integer} = workers()) = nodenames(gethostnames(procs_used))
 
-function getnprocs_node(hostnames::Vector{String})
-	nodes = getnodes(hostnames)
-	getnprocs_node(hostnames,nodes)	
+function nprocs_node(hostnames::Vector{String})
+	nodes = nodenames(hostnames)
+	nprocs_node(hostnames,nodes)	
 end
 
-function getnprocs_node(hostnames::Vector{String},nodes::Vector{String})
+function nprocs_node(hostnames::Vector{String},nodes::Vector{String})
 	Dict(node=>count(isequal(node),hostnames) for node in nodes)
 end
 
-getnprocs_node(procs_used::Vector{<:Integer}=workers()) = getnprocs_node(gethostnames(procs_used))
+nprocs_node(procs_used::Vector{<:Integer} = workers()) = nprocs_node(gethostnames(procs_used))
+
+############################################################################################
+# pmapsum and pmapreduce
+############################################################################################
 
 # This function does not sort the values, so it might be faster
-function pmapsum(::Type{T},f::Function,iterable,args...;kwargs...) where {T}
+function pmapsum(::Type{T},f::Function,iterators::Tuple,args...;kwargs...) where {T}
 
-	procs_used = workersactive(iterable)
+	procs_used = workersactive(iterators)
 
 	num_workers = length(procs_used);
 	hostnames = gethostnames(procs_used);
-	nodes = getnodes(hostnames);
+	nodes = nodenames(hostnames);
 	procid_rank0_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
 
-	nprocs_node = getnprocs_node(procs_used)
-	node_channels = Dict(node=>RemoteChannel(()->Channel{T}(nprocs_node[node]),procid_node)
+	nprocs_node_dict = nprocs_node(procs_used)
+	node_channels = Dict(node=>RemoteChannel(()->Channel{T}(nprocs_node_dict[node]),procid_node)
 		for (node,procid_node) in zip(nodes,procid_rank0_on_node))
 
 	# Worker at which final reduction takes place
@@ -502,9 +514,9 @@ function pmapsum(::Type{T},f::Function,iterable,args...;kwargs...) where {T}
 		@async begin
 			
 			node_remotechannel = node_channels[node]
-			np_node = nprocs_node[node]
+			np_node = nprocs_node_dict[node]
 			
-			iterable_on_proc = evenlyscatterproduct(iterable,num_workers,rank)
+			iterable_on_proc = evenlyscatterproduct(iterators,num_workers,rank)
 			@spawnat p put!(node_remotechannel,
 				f(iterable_on_proc,args...;kwargs...))
 
@@ -523,11 +535,19 @@ function pmapsum(::Type{T},f::Function,iterable,args...;kwargs...) where {T}
 		end
 	end
 
-	return result :: T
+	return result
+end
+
+function pmapsum(f::Function,iterable::Tuple,args...;kwargs...)
+	pmapsum(Any,f,iterable,args...;kwargs...)
+end
+
+function pmapsum(f::Function,itp::Iterators.ProductIterator,args...;kwargs...)
+	pmapsum(Any,f,itp.iterators,args...;kwargs...)
 end
 
 function pmapsum(f::Function,iterable,args...;kwargs...)
-	pmapsum(Any,f,iterable,args...;kwargs...)
+	pmapsum(Any,f,(iterable,),args...;kwargs...)
 end
 
 # Store the processor id with the value
@@ -537,17 +557,17 @@ struct pval{T}
 end
 
 function pmapreduce(::Type{T},fmap::Function,freduce::Function,
-	iterable,args...;kwargs...) where {T}
+	iterable::Tuple,args...;kwargs...) where {T}
 
 	procs_used = workersactive(iterable)
 
 	num_workers = length(procs_used);
 	hostnames = gethostnames(procs_used);
-	nodes = getnodes(hostnames);
+	nodes = nodenames(hostnames);
 	procid_rank0_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
 
-	nprocs_node = getnprocs_node(procs_used)
-	node_channels = Dict(node=>RemoteChannel(()->Channel{T}(nprocs_node[node]),procid_node)
+	nprocs_node_dict = nprocs_node(procs_used)
+	node_channels = Dict(node=>RemoteChannel(()->Channel{T}(nprocs_node_dict[node]),procid_node)
 		for (node,procid_node) in zip(nodes,procid_rank0_on_node))
 
 	# Worker at which final reduction takes place
@@ -561,7 +581,7 @@ function pmapreduce(::Type{T},fmap::Function,freduce::Function,
 		@async begin
 			
 			node_remotechannel = node_channels[node]
-			np_node = nprocs_node[node]
+			np_node = nprocs_node_dict[node]
 			
 			iterable_on_proc = evenlyscatterproduct(iterable,num_workers,rank)
 			@spawnat p put!(node_remotechannel,
@@ -588,15 +608,27 @@ function pmapreduce(::Type{T},fmap::Function,freduce::Function,
 		end
 	end
 
-	return result :: T
+	return result
 end
 
-function pmapreduce(fmap::Function,freduce::Function,iterable,args...;kwargs...)
+function pmapreduce(fmap::Function,freduce::Function,iterable::Tuple,args...;kwargs...)
 	pmapreduce(Any,fmap,freduce,iterable,args...;kwargs...)
 end
 
-function pmap_onebatchperworker(f::Function,iterable,args...;kwargs...)
+function pmapreduce(fmap::Function,freduce::Function,
+	itp::Iterators.ProductIterator,args...;kwargs...)
+	pmapreduce(Any,fmap,freduce,itp.iterators,args...;kwargs...)
+end
 
+function pmapreduce(fmap::Function,freduce::Function,iterable,args...;kwargs...)
+	pmapreduce(Any,fmap,freduce,(iterable,),args...;kwargs...)
+end
+
+############################################################################################
+# pmap in batches without reduction
+############################################################################################
+
+function pmap_onebatchperworker(f::Function,iterable::Tuple,args...;kwargs...)
 	procs_used = workersactive(iterable)
 	num_workers = get(kwargs,:num_workers,length(procs_used))
 	if num_workers<length(procs_used)
@@ -612,6 +644,14 @@ function pmap_onebatchperworker(f::Function,iterable,args...;kwargs...)
 		end
 	end
 	return futures
+end
+
+function pmap_onebatchperworker(f::Function,itp::Iterators.ProductIterator,args...;kwargs...)
+	pmap_onebatchperworker(f,itp.iterators,args...;kwargs...)
+end
+
+function pmap_onebatchperworker(f::Function,iterable,args...;kwargs...)
+	pmap_onebatchperworker(f,(iterable,),args...;kwargs...)
 end
 
 end # module

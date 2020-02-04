@@ -1,5 +1,12 @@
 using ParallelUtilities,Test,Distributed
 
+addprocs(2)
+@everywhere begin
+	using Pkg
+    Pkg.activate(".")
+    using ParallelUtilities
+end
+
 @testset "ProductSplit" begin
 
 	function split_across_processors_iterators(arr₁::Base.Iterators.ProductIterator,num_procs,proc_id)
@@ -22,9 +29,12 @@ using ParallelUtilities,Test,Distributed
     @testset "Constructor" begin
 
 	    function checkPSconstructor(iters,npmax=10)
+	    	ntasks_total = prod(map(length,iters))
 			for np = 1:npmax, p = 1:np
 		        ps = ProductSplit(iters,np,p)
 		        @test collect(ps) == collect(split_product_across_processors_iterators(iters,np,p))
+		        @test ParallelUtilities.ntasks(ps) == ntasks_total
+		        @test ParallelUtilities.ntasks(ps.iterators) == ntasks_total
 		    end
 
 		    @test_throws ParallelUtilities.ProcessorNumberError ProductSplit(iters,npmax,npmax+1)
@@ -47,6 +57,23 @@ using ParallelUtilities,Test,Distributed
 	    	checkPSconstructor(iters)
 	    	iters = (10:-1:10,6:-2:0)
 	    	@test_throws ParallelUtilities.DecreasingIteratorError ProductSplit(iters,3,2)
+    	end
+
+    	@testset "empty" begin
+    	    iters = (1:1,)
+    	    ps = ProductSplit(iters,10,2)
+    	    @test isempty(ps)
+    	    @test length(ps) == 0
+    	end
+
+    	@testset "first and last ind" begin
+    	    iters = (1:10,)
+    	    ps = ProductSplit(iters,2,1)
+    	    @test ps.firstind == 1
+    	    @test ps.lastind == div(length(iters[1]),2)
+    	    ps = ProductSplit(iters,2,2)
+    	    @test ps.firstind == div(length(iters[1]),2) + 1
+    	    @test ps.lastind == length(iters[1])
     	end
     end
 
@@ -180,3 +207,103 @@ end
         @test a <= b
     end
 end
+
+@testset "utilities" begin
+    @testset "workerrank" begin
+    	for (rank,workerid) in enumerate(workers())
+	        @test @fetchfrom workerid myid() == workerid
+	        @test @fetchfrom workerid workerrank() == rank
+	    end
+    end
+
+    @testset "workers active" begin
+        @test nworkersactive((1:1,)) == 1
+        @test nworkersactive((1:2,)) == min(2,nworkers())
+        @test nworkersactive((1:1,1:2)) == min(2,nworkers())
+        @test nworkersactive(1:2) == min(2,nworkers())
+        @test nworkersactive(1:1,1:2) == min(2,nworkers())
+        @test nworkersactive((1:nworkers()+1,)) == 2
+        @test nworkersactive(1:nworkers()+1) == 2
+    	@test workersactive((1:1,)) == workers()[1:1]
+    	@test workersactive(1:1) == workers()[1:1]
+    	@test workersactive(1:1,1:1) == workers()[1:1]
+        @test workersactive((1:2,)) == workers()[1:min(2,nworkers())]
+        @test workersactive((1:1,1:2)) == workers()[1:min(2,nworkers())]
+        @test workersactive(1:1,1:2) == workers()[1:min(2,nworkers())]
+        @test workersactive((1:nworkers()+1,)) == workers()
+        @test workersactive(1:nworkers()+1) == workers()
+
+        ps = ProductSplit((1:10,),nworkers(),1)
+        @test nworkersactive(ps) == min(10,nworkers())
+    end
+
+    @testset "hostnames" begin
+    	hostnames = gethostnames()
+    	nodes = unique(hostnames)
+        @test hostnames == [@fetchfrom p Libc.gethostname() for p in workers()]
+        @test nodenames() == nodes
+        @test nodenames(hostnames) == nodes
+        npnodes = Dict(hostnames[1]=>nworkers())
+        @test nprocs_node(hostnames,nodes) == npnodes
+        @test nprocs_node(hostnames) == npnodes
+        @test nprocs_node() == npnodes
+    end
+end
+
+@testset "pmap and reduce" begin
+
+	@testset "pmapsum" begin
+
+	    @testset "worker id" begin
+		    @test pmapsum(x->workerrank(),1:nworkers()) == sum(1:nworkers())
+		    @test pmapsum(x->myid(),1:nworkers()) == sum(workers())
+	    end
+	    
+	    @testset "one iterator" begin
+		    rng = 1:100
+		    @test pmapsum(x->sum(y[1] for y in x),rng) == sum(rng)
+		    @test pmapsum(x->sum(y[1] for y in x),Iterators.product(rng)) == sum(rng)
+		    @test pmapsum(x->sum(y[1] for y in x),(rng,)) == sum(rng)
+	    end
+
+	    @testset "array" begin
+	    	@test pmapsum(x->ones(2),1:nworkers()) == ones(2).*nworkers()
+	    end
+
+	    @testset "stepped iterator" begin
+		    rng = 1:5:100
+		    @test pmapsum(x->sum(y[1] for y in x),rng) == sum(rng)
+	    end
+
+	    @testset "two iterators" begin
+		    iters = (1:100,1:2)
+		    @test pmapsum(x->sum(y[1] for y in x),iters) == sum(iters[1])*length(iters[2])
+	    end
+	end
+    
+	@testset "pmapreduce" begin
+	    @testset "sum" begin
+		    @test pmapreduce(x->myid(),sum,1:nworkers()) == sum(workers())
+		    @test pmapreduce(x->myid(),sum,1:nworkers()) == pmapsum(x->myid(),1:nworkers())
+	    end
+
+	    @testset "concatenation" begin
+		    @test pmapreduce(x->ones(2),x->vcat(x...),1:nworkers()) == ones(2*nworkers())
+		    @test pmapreduce(x->ones(2),x->hcat(x...),1:nworkers()) == ones(2,nworkers())
+	    end
+
+	    @testset "sorting" begin
+		    @test pmapreduce(x->ones(2)*workerrank(),x->vcat(x...),1:nworkers()) == 
+		    		vcat((ones(2).*i for i=1:nworkers())...)
+	    end
+
+	    @testset "worker id" begin
+	    	@test pmapreduce(x->workerrank(),x->vcat(x...),1:nworkers()) == collect(1:nworkers())
+	    	@test pmapreduce(x->myid(),x->vcat(x...),1:nworkers()) == workers()
+		end
+	end
+end
+
+
+
+rmprocs(workers())
