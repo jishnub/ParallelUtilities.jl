@@ -11,7 +11,7 @@ workersactive,nworkersactive,workerrank,
 nodenames,gethostnames,nprocs_node,
 pmapsum,pmapreduce,pmap_onebatchperworker
 
-# The fundamental iterator that behaves like an Iterator.ProductIterator
+# The fundamental iterator that behaves like an Iterator.Take{Iterator.Drop{Iterator.ProductIterator}}
 
 struct ProcessorNumberError <: Exception 
 	p :: Int
@@ -338,19 +338,19 @@ end
 _infullrange(::Tuple{},::Tuple{}) = true
 
 # This struct is just a wrapper to flip the tuples before comparing
-struct LittleEndianTuple{T}
+struct ReverseLexicographicTuple{T}
 	t :: T
 end
 
-Base.isless(a::LittleEndianTuple{T},b::LittleEndianTuple{T}) where {T} = reverse(a.t) < reverse(b.t)
-Base.isequal(a::LittleEndianTuple{T},b::LittleEndianTuple{T}) where {T} = a.t == b.t
+Base.isless(a::ReverseLexicographicTuple{T},b::ReverseLexicographicTuple{T}) where {T} = reverse(a.t) < reverse(b.t)
+Base.isequal(a::ReverseLexicographicTuple{T},b::ReverseLexicographicTuple{T}) where {T} = a.t == b.t
 
 function Base.in(val::T,ps::ProductSplit{T}) where {T}
 	_infullrange(val,ps) || return false
 	
-	val_lt = LittleEndianTuple(val)
-	first_iter = LittleEndianTuple(ps[1])
-	last_iter = LittleEndianTuple(ps[end])
+	val_lt = ReverseLexicographicTuple(val)
+	first_iter = ReverseLexicographicTuple(ps[1])
+	last_iter = ReverseLexicographicTuple(ps[end])
 
 	first_iter <= val_lt <= last_iter
 end
@@ -378,9 +378,9 @@ function whichproc(iterators::Tuple,val::Tuple,np::Int)
 		mid = floor(Int,(left+right)/2)
 		ps = ProductSplit(iterators,np,mid)
 
-		if LittleEndianTuple(val) < LittleEndianTuple(first(ps))
+		if ReverseLexicographicTuple(val) < ReverseLexicographicTuple(first(ps))
 			right = mid - 1
-		elseif LittleEndianTuple(val) > LittleEndianTuple(last(ps))
+		elseif ReverseLexicographicTuple(val) > ReverseLexicographicTuple(last(ps))
 			left = mid + 1
 		else
 			return mid
@@ -421,9 +421,9 @@ function indexinsplitproduct(ps::ProductSplit{T},val::T) where {T}
 		mid = floor(Int,(left+right)/2)
 		val_mid = @inbounds ps[mid]
 
-		if LittleEndianTuple(val) < LittleEndianTuple(val_mid)
+		if ReverseLexicographicTuple(val) < ReverseLexicographicTuple(val_mid)
 			right = mid - 1
-		elseif LittleEndianTuple(val) > LittleEndianTuple(val_mid)
+		elseif ReverseLexicographicTuple(val) > ReverseLexicographicTuple(val_mid)
 			left = mid + 1
 		else
 			return mid

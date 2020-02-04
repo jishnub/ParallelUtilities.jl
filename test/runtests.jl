@@ -182,27 +182,27 @@ end
     end
 end
 
-@testset "LittleEndianTuple" begin
+@testset "ReverseLexicographicTuple" begin
     @testset "isless" begin
-    	a = ParallelUtilities.LittleEndianTuple((1,2,3))
-        b = ParallelUtilities.LittleEndianTuple((2,2,3))
+    	a = ParallelUtilities.ReverseLexicographicTuple((1,2,3))
+        b = ParallelUtilities.ReverseLexicographicTuple((2,2,3))
         @test a < b
         @test a <= b
-        b = ParallelUtilities.LittleEndianTuple((1,1,3))
+        b = ParallelUtilities.ReverseLexicographicTuple((1,1,3))
         @test b < a
         @test b <= a
-        b = ParallelUtilities.LittleEndianTuple((2,1,3))
+        b = ParallelUtilities.ReverseLexicographicTuple((2,1,3))
         @test b < a
         @test b <= a
-        b = ParallelUtilities.LittleEndianTuple((2,1,4))
+        b = ParallelUtilities.ReverseLexicographicTuple((2,1,4))
         @test a < b
         @test a <= b
     end
     @testset "equal" begin
-        a = ParallelUtilities.LittleEndianTuple((1,2,3))
+        a = ParallelUtilities.ReverseLexicographicTuple((1,2,3))
         @test a == a
         @test a <= a
-        b = ParallelUtilities.LittleEndianTuple(a.t)
+        b = ParallelUtilities.ReverseLexicographicTuple(a.t)
         @test a == b
         @test a <= b
     end
