@@ -34,8 +34,8 @@ end
 			for np = 1:npmax, p = 1:np
 		        ps = ProductSplit(iters,np,p)
 		        @test collect(ps) == collect(split_product_across_processors_iterators(iters,np,p))
-		        @test ParallelUtilities.ntasks(ps) == ntasks_total
-		        @test ParallelUtilities.ntasks(ps.iterators) == ntasks_total
+		        @test ntasks(ps) == ntasks_total
+		        @test ntasks(ps.iterators) == ntasks_total
 		    end
 
 		    @test_throws ParallelUtilities.ProcessorNumberError ProductSplit(iters,npmax,npmax+1)
@@ -75,14 +75,24 @@ end
     	    ps = ProductSplit(iters,2,2)
     	    @test ps.firstind == div(length(iters[1]),2) + 1
     	    @test ps.lastind == length(iters[1])
+
+    	    for np in length(iters[1])+1:length(iters[1])+10,
+    	    	p in length(iters[1])+1:np
+
+	    	    ps = ProductSplit(iters,np,p)
+	    	    @test ps.firstind == length(iters[1]) + 1
+	    	    @test ps.lastind == length(iters[1])
+	    	end
     	end
     end
 
     @testset "firstlast" begin
         @testset "first" begin
-            for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)],np=1:10
+            for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)],
+            	np=1:10ntasks(iters)
+
 	            ps = ProductSplit(iters,np,1)
-	            @test first(ps) == map(first,iters)
+	            @test first(ps) == ( isempty(ps) ? nothing : map(first,iters) )
 	        end
 
 	        iters = (1:1,)
@@ -90,9 +100,11 @@ end
 	        @test first(ps) === nothing
         end
         @testset "last" begin
-            for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)],np=1:10
+            for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)],
+            	np=1:10ntasks(iters)
+
 	            ps = ProductSplit(iters,np,np)
-	            @test last(ps) == map(last,iters)
+	            @test last(ps) == ( isempty(ps) ? nothing : map(last,iters) )
 	        end
 
 	        iters = (1:1,)
@@ -172,34 +184,44 @@ end
         end
     end
 
-    @testset "whichproc + newprocrange" begin
+    @testset "whichproc + procrange_recast" begin
         np,proc_id = 5,3
         iters = (1:10,4:6,1:4)
         ps = ProductSplit(iters,np,proc_id)
         @test whichproc(iters,first(ps),1) == 1
         @test whichproc(iters,(100,100,100),1) === nothing
-        @test newprocrange(ps,1) == 1:1
+        @test procrange_recast(ps,1) == 1:1
 
-        for np_new in 1:np
+        iters = (1:1,2:2)
+        ps = ProductSplit(iters,np,proc_id)
+        @test whichproc(iters,first(ps),np) === nothing
+        @test whichproc(iters,nothing,np) === nothing
+
+        for np_new in 1:10ntasks(iters)
         	for proc_id_new=1:np_new
 	        	ps_new = ProductSplit(iters,np_new,proc_id_new)
+
 	        	for val in ps_new
+	        		# Should loop only if ps_new is non-empty
 	        		@test whichproc(iters,val,np_new) == proc_id_new
 	        	end
 	        end
 	        procid_new_first = whichproc(iters,first(ps),np_new)
 	        proc_new_last = whichproc(iters,last(ps),np_new)
-        	@test newprocrange(ps,np_new) == procid_new_first:proc_new_last
+        	@test procrange_recast(ps,np_new) == (isempty(ps) ? (0:-1) : (procid_new_first:proc_new_last))
         end
     end
 
     @testset "localindex" begin
         
         for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)]
-	        for np=1:10,proc_id=1:np
+	        for np=1:10ntasks(iters),proc_id=1:np
 	        	ps = ProductSplit(iters,np,proc_id)
 	        	for (ind,val) in enumerate(ps)
 	        		@test localindex(ps,val) == ind
+	        	end
+	        	if isempty(ps)
+	        		@test localindex(ps,first(ps)) === nothing
 	        	end
 	        end
 	    end

@@ -4,28 +4,28 @@ using Reexport
 @reexport using Distributed
 
 export  ProductSplit,
-		evenlyscatterproduct,
-		whichproc,
-		newprocrange,
-		whichproc,
-		procidrange,
-		localindex,
-		procid_and_index,
-		extremadims,
-		extrema_commonlastdim,
-		workersactive,
-		nworkersactive,
-		workerrank,
-		nodenames,
-		gethostnames,
-		nprocs_node,
-		pmapbatch,
-		pmapbatch_elementwise,
-		pmapsum,
-		pmapsum_elementwise,
-		pmapreduce,
-		pmapreduce_commutative,
-		pmapreduce_commutative_elementwise
+	evenlyscatterproduct,
+	ntasks,
+	whichproc,
+	whichproc,
+	procrange_recast,
+	localindex,
+	procid_and_localindex,
+	extremadims,
+	extrema_commonlastdim,
+	workersactive,
+	nworkersactive,
+	workerrank,
+	nodenames,
+	gethostnames,
+	nprocs_node,
+	pmapbatch,
+	pmapbatch_elementwise,
+	pmapsum,
+	pmapsum_elementwise,
+	pmapreduce,
+	pmapreduce_commutative,
+	pmapreduce_commutative_elementwise
 
 # The fundamental iterator that behaves like an Iterator.Take{Iterator.Drop{Iterator.ProductIterator}}
 
@@ -407,13 +407,20 @@ function whichproc(iterators::Tuple,val::Tuple,np::Int)
 	# We may carry out a binary search as the iterators are sorted
 	left,right = 1,np
 
+	val_t = ReverseLexicographicTuple(val)
+
 	while left <= right
 		mid = floor(Int,(left+right)/2)
 		ps = ProductSplit(iterators,np,mid)
 
-		if ReverseLexicographicTuple(val) < ReverseLexicographicTuple(first(ps))
+		# If np is greater than the number of ntasks then it's possible
+		# that ps is empty. In this case the value must be somewhere in
+		# the previous workers. Otherwise each worker has some tasks and 
+		# these are sorted, so carry out a binary seaarch
+
+		if isempty(ps) || val_t < ReverseLexicographicTuple(first(ps))
 			right = mid - 1
-		elseif ReverseLexicographicTuple(val) > ReverseLexicographicTuple(last(ps))
+		elseif val_t > ReverseLexicographicTuple(last(ps))
 			left = mid + 1
 		else
 			return mid
@@ -423,8 +430,10 @@ function whichproc(iterators::Tuple,val::Tuple,np::Int)
 	return nothing
 end
 
+whichproc(iterators::Tuple,::Nothing,np::Int) = nothing
+
 # This function is necessary when we're changing np
-function newprocrange(ps::ProductSplit,np_new::Int)
+function procrange_recast(ps::ProductSplit,np_new::Int)
 	
 	if isempty(ps)
 		return 0:-1 # empty range
@@ -450,13 +459,15 @@ function localindex(ps::ProductSplit{T},val::T) where {T}
 	val == first(ps) && return left
 	val == last(ps) && return right
 
+	val_t = ReverseLexicographicTuple(val)
+
 	while left <= right
 		mid = floor(Int,(left+right)/2)
 		val_mid = @inbounds ps[mid]
 
-		if ReverseLexicographicTuple(val) < ReverseLexicographicTuple(val_mid)
+		if val_t < ReverseLexicographicTuple(val_mid)
 			right = mid - 1
-		elseif ReverseLexicographicTuple(val) > ReverseLexicographicTuple(val_mid)
+		elseif val_t > ReverseLexicographicTuple(val_mid)
 			left = mid + 1
 		else
 			return mid
@@ -466,12 +477,14 @@ function localindex(ps::ProductSplit{T},val::T) where {T}
 	return nothing
 end
 
+localindex(::ProductSplit,::Nothing) = nothing
+
 function localindex(iterators::Tuple,val::Tuple,np::Integer,procid::Integer)
 	ps = evenlyscatterproduct(iterators,np,procid)
 	localindex(ps,val)
 end
 
-function procid_and_index(iterators::Tuple,val::Tuple,np::Integer)
+function procid_and_localindex(iterators::Tuple,val::Tuple,np::Integer)
 	procid = whichproc(iterators,val,np)
 	index = localindex(iterators,val,np,procid)
 	return procid,index

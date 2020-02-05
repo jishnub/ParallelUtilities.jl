@@ -35,7 +35,7 @@ There are a total of 36 possible `(x,y,z)` combinations possible given these ran
 
 The package provides versions of `pmap` with an optional reduction. These differ from the one provided by `Distributed` in a few key aspects: firstly, the iterator product of the argument is what is passed to the function and not the arguments by elementwise, so the i-th task will be `Iterator.product(args...)[i]` and not `[x[i] for x in args]`. Specifically the second set of parameters in the example above will be `(2,2,3)` and not `(2,3,4)`.
 
-Secondly, the iterator is passed to the function in batches and not elementwise, and it is left to the function to iterate over the collection. Secondly, the tasks are passed on to processors sorted by rank, so the first task is passed to the first processor and the last to the last processor. The tasks are also approximately evenly distributed across processors, assuming that the function takes an equal amount of time to run for each set of parameters. The function `pmapbatch_elementwise` is also exported that passes the elements to the function one-by-one as unwrapped tuples.
+Secondly, the iterator is passed to the function in batches and not elementwise, and it is left to the function to iterate over the collection. Secondly, the tasks are passed on to processors sorted by rank, so the first task is passed to the first processor and the last to the last worker that has any tasks assigned to it. The tasks are also approximately evenly distributed across processors, assuming that the function takes an equal amount of time to run for each set of parameters. The function `pmapbatch_elementwise` is also exported that passes the elements to the function one-by-one as unwrapped tuples. This is the same as `pmap` where each worker is assigned batches of approximately equal sizes taken from the iterator product.
 
 ### pmapbatch and pmapbatch_elementwise
 
@@ -99,11 +99,11 @@ julia> pmapreduce(x->ones(2).*myid(),x->hcat(x...),1:nworkers())
 
 ## ProductSplit
 
-The package provides an iterator `ProductSplit` that lists that ranges of parameters that would be passed on to each core. This may be achieved using an
+In the above examples we have talked about the tasks being distributed approximately equally among the workers without going into details about the distribution, which is what we describe here. The package provides an iterator `ProductSplit` that lists that ranges of parameters that would be passed on to each core. This may equivalently be achieved using an
 
 ```Iterator.Take{Iterator.Drop{Iterator.ProductIterator}}```
 
-with appropriately chosen parameters, and in many ways a `ProductSplit` behaves similarly. However this iterator supports several extra features such as `O(1)` indexing, which eliminates the need to actually iterate over it in many scenarios.
+with appropriately chosen parameters, and in many ways a `ProductSplit` behaves similarly. However a `ProductSplit` supports several extra features such as `O(1)` indexing, which eliminates the need to actually iterate over it in many scenarios.
 
 The signature of the constructor is 
 
