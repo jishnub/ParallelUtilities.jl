@@ -1,4 +1,7 @@
 # ParallelUtilities.jl
+
+[![Build Status](https://travis-ci.com/jishnub/ParallelUtilities.jl.svg?branch=master)](https://travis-ci.com/jishnub/ParallelUtilities.jl)
+
 Parallel mapreduce and other helpful functions for HPC, meant primarily for embarassingly parallel operations that often require one to split up a list of tasks into subsections that can be processed on individual cores.
 
 # Installation

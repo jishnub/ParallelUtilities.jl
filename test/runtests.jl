@@ -1,4 +1,6 @@
-using ParallelUtilities,Test,Distributed
+using ParallelUtilities
+using Test
+using Distributed
 
 addprocs(2)
 @everywhere begin
@@ -85,7 +87,7 @@ end
 
 	        iters = (1:1,)
 	        ps = ProductSplit(iters,2length(iters[1]),length(iters[1])+1) # must be empty
-	        @test isnothing(first(ps))
+	        @test first(ps) === nothing
         end
         @testset "last" begin
             for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)],np=1:10
@@ -95,7 +97,7 @@ end
 
 	        iters = (1:1,)
 	        ps = ProductSplit(iters,2length(iters[1]),length(iters[1])+1) # must be empty
-	        @test isnothing(last(ps))
+	        @test last(ps) === nothing
         end
     end
 
@@ -107,8 +109,8 @@ end
 			        ps = ProductSplit(iters,np,p)
 			        pcol = collect(ps)
 			        for dim in 1:length(iters)
-			        	@test begin 
-			        		res = fn(ps,dim) == fn(x->x[dim],pcol)
+			        	@test begin
+			        		res = fn(ps,dim) == fn(x[dim] for x in pcol)
 			        		if !res
 			        			println("ProductSplit(",iters,",",np,",",p,")")
 			        		end
@@ -175,7 +177,7 @@ end
         iters = (1:10,4:6,1:4)
         ps = ProductSplit(iters,np,proc_id)
         @test whichproc(iters,first(ps),1) == 1
-        @test isnothing(whichproc(iters,(100,100,100),1))
+        @test whichproc(iters,(100,100,100),1) === nothing
         @test newprocrange(ps,1) == 1:1
 
         for np_new in 1:np
