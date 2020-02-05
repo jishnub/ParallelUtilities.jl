@@ -9,17 +9,16 @@ end
 
 @testset "ProductSplit" begin
 
-	function split_across_processors_iterators(arr₁::Base.Iterators.ProductIterator,num_procs,proc_id)
-	    @assert(proc_id<=num_procs,"processor rank has to be less than number of workers engaged")
+	function split_across_processors_iterators(arr::Base.Iterators.ProductIterator,num_procs,proc_id)
 
-	    num_tasks = length(arr₁);
+	    num_tasks = length(arr);
 
-	    num_tasks_per_process,num_tasks_leftover = div(num_tasks,num_procs),mod(num_tasks,num_procs)
+	    num_tasks_per_process,num_tasks_leftover = divrem(num_tasks,num_procs)
 
 	    num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
 	    task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover,proc_id-1) + 1;
 
-	    Iterators.take(Iterators.drop(arr₁,task_start-1),num_tasks_on_proc)
+	    Iterators.take(Iterators.drop(arr,task_start-1),num_tasks_on_proc)
 	end
 
 	function split_product_across_processors_iterators(arrs_tuple,num_procs,proc_id)
@@ -75,6 +74,29 @@ end
     	    @test ps.firstind == div(length(iters[1]),2) + 1
     	    @test ps.lastind == length(iters[1])
     	end
+    end
+
+    @testset "firstlast" begin
+        @testset "first" begin
+            for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)],np=1:10
+	            ps = ProductSplit(iters,np,1)
+	            @test first(ps) == map(first,iters)
+	        end
+
+	        iters = (1:1,)
+	        ps = ProductSplit(iters,2length(iters[1]),length(iters[1])+1) # must be empty
+	        @test isnothing(first(ps))
+        end
+        @testset "last" begin
+            for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)],np=1:10
+	            ps = ProductSplit(iters,np,np)
+	            @test last(ps) == map(last,iters)
+	        end
+
+	        iters = (1:1,)
+	        ps = ProductSplit(iters,2length(iters[1]),length(iters[1])+1) # must be empty
+	        @test isnothing(last(ps))
+        end
     end
 
     @testset "extrema" begin
@@ -169,13 +191,13 @@ end
         end
     end
 
-    @testset "indexinsplitproduct" begin
+    @testset "localindex" begin
         
         for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)]
 	        for np=1:10,proc_id=1:np
 	        	ps = ProductSplit(iters,np,proc_id)
 	        	for (ind,val) in enumerate(ps)
-	        		@test indexinsplitproduct(ps,val) == ind
+	        		@test localindex(ps,val) == ind
 	        	end
 	        end
 	    end
@@ -252,33 +274,43 @@ end
 
 @testset "pmap and reduce" begin
 
-	@testset "pmap_onebatchperworker" begin
+	@testset "pmapbatch" begin
 		iterable = 1:nworkers()
-	    f_vec = pmap_onebatchperworker(x->myid(),iterable)
-	    @test fetch.(f_vec) == workers()
-	    f_vec = pmap_onebatchperworker(x->myid(),(iterable,))
-	    @test fetch.(f_vec) == workers()
-	    f_vec = pmap_onebatchperworker(x->myid(),(iterable,1:1))
-	    @test fetch.(f_vec) == workers()
+	    res = pmapbatch(x->myid(),iterable)
+	    @test res == workers()
+	    res = pmapbatch(x->myid(),(iterable,))
+	    @test res == workers()
+	    res = pmapbatch(x->myid(),(iterable,1:1))
+	    @test res == workers()
 
 	    iterable = 1:nworkers()-1
-	    f_vec = pmap_onebatchperworker(x->myid(),iterable)
-	    @test fetch.(f_vec) == workersactive(iterable)
+	    res = pmapbatch(x->myid(),iterable)
+	    @test res == workersactive(iterable)
 
 	    iterable = 1:nworkers()
-	    f_vec = pmap_onebatchperworker(identity,iterable)
-	    res = [ProductSplit((iterable,),nworkersactive(iterable),p) for p=1:nworkersactive(iterable)]
-		@test fetch.(f_vec) == res
+	    res = pmapbatch(identity,iterable)
+	    resexp = [ProductSplit((iterable,),nworkersactive(iterable),p) for p=1:nworkersactive(iterable)]
+		@test res == resexp
 	    
 	    iterable = 1:nworkers()
-	    f_vec = pmap_onebatchperworker(identity,iterable)
-	    res = [ProductSplit((iterable,),nworkers(),p) for p=1:nworkers()]
-		@test fetch.(f_vec) == res
+	    res = pmapbatch(identity,iterable)
+	    resexp = [ProductSplit((iterable,),nworkers(),p) for p=1:nworkers()]
+		@test res == resexp
 	    
 	    iterable = 1:2nworkers()
-	    f_vec = pmap_onebatchperworker(identity,iterable)
-	    res = [ProductSplit((iterable,),nworkersactive(iterable),p) for p=1:nworkersactive(iterable)]
-		@test fetch.(f_vec) == res
+	    res = pmapbatch(identity,iterable)
+	    resexp = [ProductSplit((iterable,),nworkersactive(iterable),p) for p=1:nworkersactive(iterable)]
+		@test res == resexp
+	end
+
+	@testset "pmapbatch_elementwise" begin
+	    iterable = 1:nworkers()
+	    res = pmapbatch_elementwise(identity,iterable)
+	    @test res == iterable
+
+		iterable = 1:20
+	    res = pmapbatch_elementwise(x->x^2,iterable)
+	    @test res == iterable.^2
 	end
 
 	@testset "pmapsum" begin
@@ -311,29 +343,66 @@ end
 		    @test pmapsum(x->sum(y[1] for y in x),iters) == sum(iters[1])*length(iters[2])
 	    end
 	end
+
+	@testset "pmapsum_elementwise" begin
+	    iterable = 1:100
+	    res = pmapsum_elementwise(identity,iterable)
+	    @test res == sum(iterable)
+
+	    iterable = 1:100
+	    res = pmapsum_elementwise(x->x^2,iterable)
+	    @test res == sum(x->x^2,iterable)
+	    @test res == pmapsum(plist->sum(x[1]^2 for x in plist),iterable)
+	end
     
 	@testset "pmapreduce" begin
-	    @testset "sum" begin
-		    @test pmapreduce(x->myid(),sum,1:nworkers()) == sum(workers())
-		    @test pmapreduce(x->myid(),sum,(1:nworkers(),)) == sum(workers())
-		    @test pmapreduce(x->myid(),sum,(1:nworkers(),1:1)) == sum(workers())
-		    @test pmapreduce(x->myid(),sum,1:nworkers()) == pmapsum(x->myid(),1:nworkers())
-	    end
-
-	    @testset "concatenation" begin
-		    @test pmapreduce(x->ones(2),x->vcat(x...),1:nworkers()) == ones(2*nworkers())
-		    @test pmapreduce(x->ones(2),x->hcat(x...),1:nworkers()) == ones(2,nworkers())
-	    end
-
-	    @testset "sorting" begin
-		    @test pmapreduce(x->ones(2)*workerrank(),x->vcat(x...),1:nworkers()) == 
-		    		vcat((ones(2).*i for i=1:nworkers())...)
-	    end
-
-	    @testset "worker id" begin
-	    	@test pmapreduce(x->workerrank(),x->vcat(x...),1:nworkers()) == collect(1:nworkers())
-	    	@test pmapreduce(x->myid(),x->vcat(x...),1:nworkers()) == workers()
+		
+		@testset "unsorted" begin
+			@testset "sum" begin
+			    @test pmapreduce_commutative(x->myid(),sum,1:nworkers()) == sum(workers())
+			    @test pmapreduce_commutative(x->myid(),sum,(1:nworkers(),)) == sum(workers())
+			    @test pmapreduce_commutative(x->myid(),sum,(1:nworkers(),1:1)) == sum(workers())
+			    @test pmapreduce_commutative(x->myid(),sum,1:nworkers()) == pmapsum(x->myid(),1:nworkers())
+		    end
+		    @testset "prod" begin
+			    @test pmapreduce_commutative(x->myid(),prod,1:nworkers()) == prod(workers())
+			    @test pmapreduce_commutative(x->myid(),prod,(1:nworkers(),)) == prod(workers())
+			    @test pmapreduce_commutative(x->myid(),prod,(1:nworkers(),1:1)) == prod(workers())
+		    end
 		end
+
+		@testset "unsorted elementwise" begin
+		    iter = 1:1000
+		    res = pmapreduce_commutative_elementwise(x->x^2,sum,iter)
+		    @test res == sum(x->x^2,iter)
+		    @test res == pmapsum_elementwise(x->x^2,iter)
+		    @test res == pmapsum(plist->sum(x[1]^2 for x in plist),iter)
+		end
+		
+		@testset "sorted" begin
+		    @testset "sum" begin
+			    @test pmapreduce(x->myid(),sum,1:nworkers()) == sum(workers())
+			    @test pmapreduce(x->myid(),sum,(1:nworkers(),)) == sum(workers())
+			    @test pmapreduce(x->myid(),sum,(1:nworkers(),1:1)) == sum(workers())
+			    @test pmapreduce(x->myid(),sum,1:nworkers()) == pmapsum(x->myid(),1:nworkers())
+		    end
+
+		    @testset "concatenation" begin
+			    @test pmapreduce(x->ones(2),x->vcat(x...),1:nworkers()) == ones(2*nworkers())
+			    @test pmapreduce(x->ones(2),x->hcat(x...),1:nworkers()) == ones(2,nworkers())
+		    end
+
+		    @testset "sorting" begin
+			    @test pmapreduce(x->ones(2)*workerrank(),x->vcat(x...),1:nworkers()) == 
+			    		vcat((ones(2).*i for i=1:nworkers())...)
+		    end
+
+		    @testset "worker id" begin
+		    	@test pmapreduce(x->workerrank(),x->vcat(x...),1:nworkers()) == collect(1:nworkers())
+		    	@test pmapreduce(x->myid(),x->vcat(x...),1:nworkers()) == workers()
+			end
+		end
+		    
 	end
 end
 

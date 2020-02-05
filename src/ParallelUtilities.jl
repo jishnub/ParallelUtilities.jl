@@ -3,13 +3,29 @@ module ParallelUtilities
 using Reexport
 @reexport using Distributed
 
-export ProductSplit,evenlyscatterproduct,evenlyscatterproduct,
-whichproc,newprocrange,whichproc,procidrange,
-indexinsplitproduct,procid_and_index,
-extremadims,extrema_commonlastdim,
-workersactive,nworkersactive,workerrank,
-nodenames,gethostnames,nprocs_node,
-pmapsum,pmapreduce,pmap_onebatchperworker
+export  ProductSplit,
+		evenlyscatterproduct,
+		whichproc,
+		newprocrange,
+		whichproc,
+		procidrange,
+		localindex,
+		procid_and_index,
+		extremadims,
+		extrema_commonlastdim,
+		workersactive,
+		nworkersactive,
+		workerrank,
+		nodenames,
+		gethostnames,
+		nprocs_node,
+		pmapbatch,
+		pmapbatch_elementwise,
+		pmapsum,
+		pmapsum_elementwise,
+		pmapreduce,
+		pmapreduce_commutative,
+		pmapreduce_commutative_elementwise
 
 # The fundamental iterator that behaves like an Iterator.Take{Iterator.Drop{Iterator.ProductIterator}}
 
@@ -92,6 +108,16 @@ end
 	(@inbounds first(t)[ind],_first(Base.tail(t),rest...)...)
 end
 @inline _first(::Tuple{},rest...) = ()
+
+@inline Base.@propagate_inbounds function Base.last(ps::ProductSplit)
+	isempty(ps) ? nothing : _last(ps.iterators,childindex(ps,ps.lastind)...)
+end
+
+@inline Base.@propagate_inbounds function _last(t::Tuple,ind::Int,rest::Int...)
+	@boundscheck (1 <= ind <= length(first(t))) || throw(BoundsError(first(t),ind))
+	(@inbounds first(t)[ind],_last(Base.tail(t),rest...)...)
+end
+@inline _last(::Tuple{},rest...) = ()
 
 @inline Base.length(ps::ProductSplit) = ps.lastind - ps.firstind + 1
 @inline Base.lastindex(ps::ProductSplit) = ps.lastind - ps.firstind + 1
@@ -197,6 +223,7 @@ _checknorollover(::Tuple{},::Tuple{},::Tuple{}) = true
 
 @inline function Base.maximum(ps::ProductSplit{<:Any,1},dim::Int=1)
 	@boundscheck (dim > 1) && throw(BoundsError(ps.iterators,dim))
+	isempty(ps) && return nothing
 	lastindchild = childindex(ps,ps.lastind)
 	@inbounds lic_dim = lastindchild[1]
 	@inbounds iter = ps.iterators[1]
@@ -206,6 +233,8 @@ end
 @inline function Base.maximum(ps::ProductSplit{<:Any,N},dim::Int) where {N}
 
 	@boundscheck (1 <= dim <= N) || throw(BoundsError(ps.iterators,dim))
+
+	isempty(ps) && return nothing
 	
 	firstindchild = childindex(ps,ps.firstind)
 	lastindchild = childindex(ps,ps.lastind)
@@ -229,6 +258,7 @@ end
 
 @inline function Base.minimum(ps::ProductSplit{<:Any,1},dim::Int=1)
 	@boundscheck (dim > 1) && throw(BoundsError(ps.iterators,dim))
+	isempty(ps) && return nothing
 	firstindchild = childindex(ps,ps.firstind)
 	@inbounds fic_dim = firstindchild[1]
 	@inbounds iter = ps.iterators[1]
@@ -238,6 +268,8 @@ end
 @inline function Base.minimum(ps::ProductSplit{<:Any,N},dim::Int) where {N}
 	
 	@boundscheck (1 <= dim <= N) || throw(BoundsError(ps.iterators,dim))
+
+	isempty(ps) && return nothing
 
 	firstindchild = childindex(ps,ps.firstind)
 	lastindchild = childindex(ps,ps.lastind)
@@ -261,6 +293,7 @@ end
 
 @inline function Base.extrema(ps::ProductSplit{<:Any,1},dim::Int=1)
 	@boundscheck (dim > 1) && throw(BoundsError(ps.iterators,dim))
+	isempty(ps) && return nothing
 	firstindchild = childindex(ps,ps.firstind)
 	lastindchild = childindex(ps,ps.lastind)
 	@inbounds fic_dim = firstindchild[1]
@@ -273,6 +306,8 @@ end
 @inline function Base.extrema(ps::ProductSplit{<:Any,N},dim::Int) where {N}
 	
 	@boundscheck (1 <= dim <= N) || throw(BoundsError(ps.iterators,dim))
+
+	isempty(ps) && return nothing
 
 	firstindchild = childindex(ps,ps.firstind)
 	lastindchild = childindex(ps,ps.lastind)
@@ -293,9 +328,7 @@ end
 	return v
 end
 
-function extremadims(ps::ProductSplit)
-	_extremadims(ps,1,ps.iterators)
-end
+extremadims(ps::ProductSplit) = _extremadims(ps,1,ps.iterators)
 
 function _extremadims(ps::ProductSplit,dim::Int,iterators::Tuple)
 	(extrema(ps,dim),_extremadims(ps,dim+1,Base.tail(iterators))...)
@@ -407,7 +440,7 @@ function newprocrange(ps::ProductSplit,np_new::Int)
 	return procid_start:procid_end
 end
 
-function indexinsplitproduct(ps::ProductSplit{T},val::T) where {T}
+function localindex(ps::ProductSplit{T},val::T) where {T}
 	# Can carry out a binary search
 
 	(isempty(ps) || val ∉ ps) && return nothing
@@ -433,14 +466,14 @@ function indexinsplitproduct(ps::ProductSplit{T},val::T) where {T}
 	return nothing
 end
 
-function indexinsplitproduct(iterators::Tuple,val::Tuple,np::Integer,procid::Integer)
+function localindex(iterators::Tuple,val::Tuple,np::Integer,procid::Integer)
 	ps = evenlyscatterproduct(iterators,np,procid)
-	indexinsplitproduct(ps,val)
+	localindex(ps,val)
 end
 
 function procid_and_index(iterators::Tuple,val::Tuple,np::Integer)
 	procid = whichproc(iterators,val,np)
-	index = indexinsplitproduct(iterators,val,np,procid)
+	index = localindex(iterators,val,np,procid)
 	return procid,index
 end
 
@@ -490,7 +523,8 @@ nprocs_node(procs_used::Vector{<:Integer} = workers()) = nprocs_node(gethostname
 ############################################################################################
 
 # This function does not sort the values, so it might be faster
-function pmapsum(::Type{T},f::Function,iterators::Tuple,args...;kwargs...) where {T}
+function pmapreduce_commutative(::Type{T},fmap::Function,freduce::Function,
+	iterators::Tuple,args...;kwargs...) where {T}
 
 	procs_used = workersactive(iterators)
 
@@ -509,7 +543,7 @@ function pmapsum(::Type{T},f::Function,iterators::Tuple,args...;kwargs...) where
 	sum_channel = RemoteChannel(()->Channel{T}(length(procid_rank0_on_node)),p_final)
 	result = nothing
 
-	# Run the function on each processor and compute the sum at each node
+	# Run the function on each processor and compute the reduction at each node
 	@sync for (rank,(p,node)) in enumerate(zip(procs_used,hostnames))
 		@async begin
 			
@@ -518,17 +552,17 @@ function pmapsum(::Type{T},f::Function,iterators::Tuple,args...;kwargs...) where
 			
 			iterable_on_proc = evenlyscatterproduct(iterators,num_workers,rank)
 			@spawnat p put!(node_remotechannel,
-				f(iterable_on_proc,args...;kwargs...))
+				fmap(iterable_on_proc,args...;kwargs...))
 
 			@async if p in procid_rank0_on_node
 				f = @spawnat p put!(sum_channel,
-					sum(take!(node_remotechannel) for i=1:np_node))
+					freduce(take!(node_remotechannel) for i=1:np_node))
 				wait(f)
 				@spawnat p finalize(node_remotechannel)
 			end
 
 			@async if p==p_final
-				result = @fetchfrom p_final sum(take!(sum_channel)
+				result = @fetchfrom p_final freduce(take!(sum_channel)
 					for i=1:length(procid_rank0_on_node))
 				@spawnat p finalize(sum_channel)
 			end
@@ -538,16 +572,49 @@ function pmapsum(::Type{T},f::Function,iterators::Tuple,args...;kwargs...) where
 	return result
 end
 
-function pmapsum(f::Function,iterable::Tuple,args...;kwargs...)
-	pmapsum(Any,f,iterable,args...;kwargs...)
+function pmapreduce_commutative(::Type{T},fmap::Function,freduce::Function,
+	itp::Iterators.ProductIterator,args...;kwargs...) where {T}
+
+	pmapreduce_commutative(T,fmap,freduce,itp.iterators,args...;kwargs...)
 end
 
-function pmapsum(f::Function,itp::Iterators.ProductIterator,args...;kwargs...)
-	pmapsum(Any,f,itp.iterators,args...;kwargs...)
+function pmapreduce_commutative(::Type{T},fmap::Function,freduce::Function,
+	iterable,args...;kwargs...) where {T}
+
+	pmapreduce_commutative(T,fmap,freduce,(iterable,),args...;kwargs...)
 end
 
-function pmapsum(f::Function,iterable,args...;kwargs...)
-	pmapsum(Any,f,(iterable,),args...;kwargs...)
+function pmapreduce_commutative(fmap::Function,freduce::Function,iterable,args...;kwargs...)
+	pmapreduce_commutative(Any,fmap,freduce,iterable,args...;kwargs...)
+end
+
+function pmapreduce_commutative_elementwise(::Type{T},fmap::Function,freduce::Function,
+	iterable,args...;kwargs...) where {T}
+
+	pmapreduce_commutative(T,plist->freduce(asyncmap(x->fmap(x...,args...;kwargs...),plist)),
+		freduce,iterable,args...;kwargs...)
+end
+
+function pmapreduce_commutative_elementwise(fmap::Function,freduce::Function,
+	iterable,args...;kwargs...)
+
+	pmapreduce_commutative_elementwise(Any,fmap,freduce,iterable,args...;kwargs...)
+end
+
+function pmapsum(fmap::Function,iterable,args...;kwargs...)
+	pmapreduce_commutative(fmap,sum,iterable,args...;kwargs...)
+end
+
+function pmapsum(::Type{T},fmap::Function,iterable,args...;kwargs...) where {T}
+	pmapreduce_commutative(T,fmap,sum,iterable,args...;kwargs...)
+end
+
+function pmapsum_elementwise(fmap::Function,iterable,args...;kwargs...)
+	pmapsum_elementwise(Any,fmap,iterable,args...;kwargs...)
+end
+
+function pmapsum_elementwise(::Type{T},fmap::Function,iterable,args...;kwargs...) where {T}
+	pmapsum(T,plist->sum(asyncmap(x->fmap(x...,args...;kwargs...),plist)),iterable)
 end
 
 # Store the processor id with the value
@@ -628,7 +695,7 @@ end
 # pmap in batches without reduction
 ############################################################################################
 
-function pmap_onebatchperworker(f::Function,iterable::Tuple,args...;kwargs...)
+function pmapbatch(f::Function,iterable::Tuple,args...;kwargs...)
 	procs_used = workersactive(iterable)
 	num_workers = get(kwargs,:num_workers,length(procs_used))
 	if num_workers<length(procs_used)
@@ -643,15 +710,19 @@ function pmap_onebatchperworker(f::Function,iterable::Tuple,args...;kwargs...)
 			futures[rank] = @spawnat p f(iterable_on_proc,args...;kwargs...)
 		end
 	end
-	return futures
+	vcat(asyncmap(fetch,futures)...)
 end
 
-function pmap_onebatchperworker(f::Function,itp::Iterators.ProductIterator,args...;kwargs...)
-	pmap_onebatchperworker(f,itp.iterators,args...;kwargs...)
+function pmapbatch(f::Function,itp::Iterators.ProductIterator,args...;kwargs...)
+	pmapbatch(f,itp.iterators,args...;kwargs...)
 end
 
-function pmap_onebatchperworker(f::Function,iterable,args...;kwargs...)
-	pmap_onebatchperworker(f,(iterable,),args...;kwargs...)
+function pmapbatch(f::Function,iterable,args...;kwargs...)
+	pmapbatch(f,(iterable,),args...;kwargs...)
+end
+
+function pmapbatch_elementwise(f::Function,iterable,args...;kwargs...)
+	pmapbatch(plist->asyncmap(x->f(x...,args...;kwargs...),plist),iterable)
 end
 
 end # module
