@@ -41,6 +41,10 @@ end
 		    @test_throws ParallelUtilities.ProcessorNumberError ProductSplit(iters,npmax,npmax+1)
 		end
 
+		@testset "0D" begin
+		    @test_throws ArgumentError ProductSplit((),2,1)
+		end
+
     	@testset "1D" begin
 	    	iters = (1:10,)
 	    	checkPSconstructor(iters)
@@ -89,7 +93,7 @@ end
     @testset "firstlast" begin
         @testset "first" begin
             for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)],
-            	np=1:10ntasks(iters)
+            	np=1:5ntasks(iters)
 
 	            ps = ProductSplit(iters,np,1)
 	            @test first(ps) == ( isempty(ps) ? nothing : map(first,iters) )
@@ -101,7 +105,7 @@ end
         end
         @testset "last" begin
             for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)],
-            	np=1:10ntasks(iters)
+            	np=1:5ntasks(iters)
 
 	            ps = ProductSplit(iters,np,np)
 	            @test last(ps) == ( isempty(ps) ? nothing : map(last,iters) )
@@ -141,12 +145,25 @@ end
 
     	@testset "extremadims" begin
     		for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)]
-	    		for np = 1:10, proc_id = 1:np
+    			dims = length(iters)
+	    		for np = 1:5ntasks(iters), proc_id = 1:np
 	    	    	ps = ProductSplit(iters,np,proc_id)
-	    	    	ext = Tuple(map(extrema,zip(collect(ps)...)))
-	    	    	@test extremadims(ps) == ext
+	    	    	if isempty(ps)
+	    	    		@test extremadims(ps) == Tuple(nothing for i=1:dims)
+	    	    	else
+		    	    	ext = Tuple(map(extrema,zip(collect(ps)...)))
+		    	    	@test extremadims(ps) == ext
+		    	    end
 	    	    end
 	    	end
+    	end
+
+    	@testset "extrema_commonlastdim" begin
+    	    iters = (1:10,4:6,1:4)
+    	    ps = ProductSplit(iters,37,8)
+    	    @test extrema_commonlastdim(ps) == ([(9,1),(6,1)],[(2,2),(4,2)])
+    	    ps = ProductSplit(iters,ntasks(iters)+1,ntasks(iters)+1)
+    	    @test extrema_commonlastdim(ps) === nothing
     	end
     end
 
@@ -199,7 +216,11 @@ end
         @test whichproc(iters,first(ps),np) === nothing
         @test whichproc(iters,nothing,np) === nothing
 
-        for np_new in 1:10ntasks(iters)
+        iters = (1:1,2:2)
+        ps = ProductSplit(iters,1,1)
+        @test procrange_recast(ps,2) == 1:1
+
+        for np_new in 1:5ntasks(iters)
         	for proc_id_new=1:np_new
 	        	ps_new = ProductSplit(iters,np_new,proc_id_new)
 
@@ -217,13 +238,29 @@ end
     @testset "localindex" begin
         
         for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)]
-	        for np=1:10ntasks(iters),proc_id=1:np
+	        for np=1:5ntasks(iters),proc_id=1:np
 	        	ps = ProductSplit(iters,np,proc_id)
 	        	for (ind,val) in enumerate(ps)
 	        		@test localindex(ps,val) == ind
+	        		@test localindex(iters,val,np,proc_id) == ind
 	        	end
 	        	if isempty(ps)
 	        		@test localindex(ps,first(ps)) === nothing
+	        	end
+	        end
+	    end
+    end
+
+    @testset "procid_and_localindex" begin
+        for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)]
+	        for np=1:ntasks(iters),proc_id=1:np
+	        	ps_col = collect(ProductSplit(iters,np,proc_id))
+	        	ps_col_rev = [reverse(t) for t in ps_col] 
+	        	for val in ps_col
+	        		p,ind = procid_and_localindex(iters,val,np)
+	        		@test p == proc_id
+	        		ind_in_arr = searchsortedfirst(ps_col_rev,reverse(val))
+	        		@test ind == ind_in_arr
 	        	end
 	        end
 	    end
@@ -249,9 +286,11 @@ end
     @testset "equal" begin
         a = ParallelUtilities.ReverseLexicographicTuple((1,2,3))
         @test a == a
+        @test isequal(a,a)
         @test a <= a
         b = ParallelUtilities.ReverseLexicographicTuple(a.t)
         @test a == b
+        @test isequal(a,b)
         @test a <= b
     end
 end

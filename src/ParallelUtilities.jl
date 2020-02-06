@@ -336,6 +336,9 @@ end
 _extremadims(::ProductSplit,::Int,::Tuple{}) = ()
 
 function extrema_commonlastdim(ps::ProductSplit{<:Any,N}) where {N}
+
+	isempty(ps) && return nothing
+	
 	m = extremadims(ps)
 	lastvar_min = last(m)[1]
 	lastvar_max = last(m)[2]
