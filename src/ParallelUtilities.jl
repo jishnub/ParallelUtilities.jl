@@ -400,6 +400,9 @@ function evenlyscatterproduct(iterators::Tuple,
 	ProductSplit(iterators,np,procid)
 end
 
+evenlyscatterproduct(itp::Iterators.ProductIterator,args...) = 
+	evenlyscatterproduct(itp.iterators,args...)
+
 function whichproc(iterators::Tuple,val::Tuple,np::Int)
 	
 	_infullrange(val,iterators) || return nothing
@@ -504,9 +507,11 @@ end
 	nt <= nw ? nt : nw
 end
 @inline nworkersactive(ps::ProductSplit) = nworkersactive(ps.iterators)
+@inline nworkersactive(itp::Iterators.ProductIterator) = nworkersactive(itp.iterators)
 @inline nworkersactive(args...) = nworkersactive(args)
 @inline workersactive(iterators::Tuple) = workers()[1:nworkersactive(iterators)]
 @inline workersactive(ps::ProductSplit) = workersactive(ps.iterators)
+@inline workersactive(itp::Iterators.ProductIterator) = workersactive(itp.iterators)
 @inline workersactive(args...) = workersactive(args)
 
 function gethostnames(procs_used = workers())

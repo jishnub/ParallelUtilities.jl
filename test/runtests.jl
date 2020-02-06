@@ -181,6 +181,8 @@ end
         @test evenlyscatterproduct(n,np,proc_id) == ProductSplit((1:n,),np,proc_id)
         for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)]
         	@test evenlyscatterproduct(iters,np,proc_id) == ProductSplit(iters,np,proc_id)
+        	itp = Iterators.product(iters...)
+        	@test evenlyscatterproduct(itp,np,proc_id) == ProductSplit(iters,np,proc_id)
         end
     end
 
@@ -281,6 +283,11 @@ end
 
         ps = ProductSplit((1:10,),nworkers(),1)
         @test nworkersactive(ps) == min(10,nworkers())
+
+        iters = (1:1,1:2)
+        itp = Iterators.product(iters...)
+        @test nworkersactive(itp) == nworkersactive(iters)
+        @test workersactive(itp) == workersactive(iters)
     end
 
     @testset "hostnames" begin
