@@ -73,11 +73,11 @@ struct ProductSplit{T,N,Q}
 end
 Base.eltype(::ProductSplit{T}) where {T} = T
 
-function _cumprod(len)
+function _cumprod(len::Tuple)
 	(0,_cumprod(first(len),Base.tail(len))...)
 end
 
-_cumprod(::Int,::Tuple{}) = ()
+@inline _cumprod(::Int,::Tuple{}) = ()
 function _cumprod(n::Int,tl::Tuple)
 	(n,_cumprod(n*first(tl),Base.tail(tl))...)
 end
@@ -107,7 +107,7 @@ end
 	@boundscheck (1 <= ind <= length(first(t))) || throw(BoundsError(first(t),ind))
 	(@inbounds first(t)[ind],_first(Base.tail(t),rest...)...)
 end
-@inline _first(::Tuple{},rest...) = ()
+@inline _first(::Tuple{}) = ()
 
 @inline Base.@propagate_inbounds function Base.last(ps::ProductSplit)
 	isempty(ps) ? nothing : _last(ps.iterators,childindex(ps,ps.lastind)...)
@@ -117,7 +117,7 @@ end
 	@boundscheck (1 <= ind <= length(first(t))) || throw(BoundsError(first(t),ind))
 	(@inbounds first(t)[ind],_last(Base.tail(t),rest...)...)
 end
-@inline _last(::Tuple{},rest...) = ()
+@inline _last(::Tuple{}) = ()
 
 @inline Base.length(ps::ProductSplit) = ps.lastind - ps.firstind + 1
 @inline Base.lastindex(ps::ProductSplit) = ps.lastind - ps.firstind + 1
@@ -371,7 +371,7 @@ _infullrange(val::T,ps::ProductSplit{T}) where {T} = _infullrange(val,ps.iterato
 function _infullrange(val,t::Tuple)
 	first(val) in first(t) && _infullrange(Base.tail(val),Base.tail(t))
 end
-_infullrange(::Tuple{},::Tuple{}) = true
+@inline _infullrange(::Tuple{},::Tuple{}) = true
 
 # This struct is just a wrapper to flip the tuples before comparing
 struct ReverseLexicographicTuple{T}

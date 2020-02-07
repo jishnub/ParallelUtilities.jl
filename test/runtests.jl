@@ -36,6 +36,7 @@ end
 		        @test collect(ps) == collect(split_product_across_processors_iterators(iters,np,p))
 		        @test ntasks(ps) == ntasks_total
 		        @test ntasks(ps.iterators) == ntasks_total
+		        @test eltype(ps) == Tuple{map(eltype,iters)...}
 		    end
 
 		    @test_throws ParallelUtilities.ProcessorNumberError ProductSplit(iters,npmax,npmax+1)
@@ -43,6 +44,13 @@ end
 
 		@testset "0D" begin
 		    @test_throws ArgumentError ProductSplit((),2,1)
+		end
+
+		@testset "cumprod" begin
+		    @test ParallelUtilities._cumprod(1,()) == ()
+		    @test ParallelUtilities._cumprod(1,(2,)) == (1,)
+		    @test ParallelUtilities._cumprod(1,(2,3)) == (1,2)
+		    @test ParallelUtilities._cumprod(1,(2,3,4)) == (1,2,6)
 		end
 
     	@testset "1D" begin
@@ -92,6 +100,9 @@ end
 
     @testset "firstlast" begin
         @testset "first" begin
+
+        	@test ParallelUtilities._first(()) == ()
+
             for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)],
             	np=1:5ntasks(iters)
 
@@ -104,6 +115,9 @@ end
 	        @test first(ps) === nothing
         end
         @testset "last" begin
+
+        	@test ParallelUtilities._last(()) == ()
+
             for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)],
             	np=1:5ntasks(iters)
 
@@ -144,6 +158,8 @@ end
     	end
 
     	@testset "extremadims" begin
+    		ps = ProductSplit((1:10,),2,1)
+    		@test ParallelUtilities._extremadims(ps,1,()) == ()
     		for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)]
     			dims = length(iters)
 	    		for np = 1:5ntasks(iters), proc_id = 1:np
@@ -190,6 +206,8 @@ end
         for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)]
 	        checkifpresent(iters)
 	    end
+
+	    @test ParallelUtilities._infullrange((),())
     end
 
     @testset "evenlyscatterproduct" begin
@@ -268,6 +286,12 @@ end
     end
 
     @testset "getindex" begin
+    	
+    	@test ParallelUtilities._getindex((),1) == ()
+    	@test ParallelUtilities._getindex((),1,2) == ()
+
+    	@test ParallelUtilities.childindex((),1) == (1,)
+
         for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)]
             for np=1:ntasks(iters),p=1:np
             	ps = ProductSplit(iters,np,p)
@@ -430,7 +454,9 @@ end
 		    @testset "worker id" begin
 			    @test pmapsum(x->workerrank(),1:nworkers()) == sum(1:nworkers())
 			    @test pmapsum(x->workerrank(),(1:nworkers(),)) == sum(1:nworkers())
+			    @test pmapsum(x->workerrank(),Iterators.product(1:nworkers())) == sum(1:nworkers())
 			    @test pmapsum(x->workerrank(),(1:nworkers(),1:1)) == sum(1:nworkers())
+			    @test pmapsum(x->workerrank(),Iterators.product(1:nworkers(),1:1)) == sum(1:nworkers())
 			    @test pmapsum(x->myid(),1:nworkers()) == sum(workers())
 		    end
 		    
@@ -465,6 +491,10 @@ end
 			    iterable = 1:100
 			    res = pmapsum_elementwise(identity,iterable)
 			    @test res == sum(iterable)
+			    res = pmapsum_elementwise(identity,Iterators.product(iterable))
+			    @test res == sum(iterable)
+			    res = pmapsum_elementwise(identity,(iterable,))
+			    @test res == sum(iterable)
 
 			    iterable = 1:100
 			    res = pmapsum_elementwise(x->x^2,iterable)
@@ -483,13 +513,17 @@ end
 			@testset "sum" begin
 			    @test pmapreduce_commutative(x->myid(),sum,1:nworkers()) == sum(workers())
 			    @test pmapreduce_commutative(x->myid(),sum,(1:nworkers(),)) == sum(workers())
+			    @test pmapreduce_commutative(x->myid(),sum,Iterators.product(1:nworkers())) == sum(workers())
 			    @test pmapreduce_commutative(x->myid(),sum,(1:nworkers(),1:1)) == sum(workers())
+			    @test pmapreduce_commutative(x->myid(),sum,Iterators.product(1:nworkers(),1:1)) == sum(workers())
 			    @test pmapreduce_commutative(x->myid(),sum,1:nworkers()) == pmapsum(x->myid(),1:nworkers())
 		    end
 		    @testset "prod" begin
 			    @test pmapreduce_commutative(x->myid(),prod,1:nworkers()) == prod(workers())
 			    @test pmapreduce_commutative(x->myid(),prod,(1:nworkers(),)) == prod(workers())
+			    @test pmapreduce_commutative(x->myid(),prod,Iterators.product(1:nworkers())) == prod(workers())
 			    @test pmapreduce_commutative(x->myid(),prod,(1:nworkers(),1:1)) == prod(workers())
+			    @test pmapreduce_commutative(x->myid(),prod,Iterators.product(1:nworkers(),1:1)) == prod(workers())
 		    end
 
 		    @testset "errors" begin
@@ -509,6 +543,10 @@ end
 			    @test res == sum(x->x^2,iter)
 			    @test res == pmapsum_elementwise(x->x^2,iter)
 			    @test res == pmapsum(plist->sum(x[1]^2 for x in plist),iter)
+			    res = pmapreduce_commutative_elementwise(x->x^2,sum,(iter,))
+			    @test res == sum(x->x^2,iter)
+			    res = pmapreduce_commutative_elementwise(x->x^2,sum,Iterators.product(iter))
+			    @test res == sum(x->x^2,iter)
 			end
 
 			@testset "errors" begin
@@ -528,7 +566,9 @@ end
 		    @testset "sum" begin
 			    @test pmapreduce(x->myid(),sum,1:nworkers()) == sum(workers())
 			    @test pmapreduce(x->myid(),sum,(1:nworkers(),)) == sum(workers())
+			    @test pmapreduce(x->myid(),sum,Iterators.product(1:nworkers())) == sum(workers())
 			    @test pmapreduce(x->myid(),sum,(1:nworkers(),1:1)) == sum(workers())
+			    @test pmapreduce(x->myid(),sum,Iterators.product(1:nworkers(),1:1)) == sum(workers())
 			    @test pmapreduce(x->myid(),sum,1:nworkers()) == pmapsum(x->myid(),1:nworkers())
 		    end
 
