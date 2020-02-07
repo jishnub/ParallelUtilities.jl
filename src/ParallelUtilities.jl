@@ -543,99 +543,119 @@ nprocs_node(procs_used::Vector{<:Integer} = workers()) = nprocs_node(gethostname
 # pmapsum and pmapreduce
 ############################################################################################
 
+function throwRemoteException(e::Exception)
+	c = CapturedException(e,catch_backtrace())
+	throw(RemoteException(c))
+end
+
 # This function does not sort the values, so it might be faster
-function pmapreduce_commutative(::Type{T},fmap::Function,freduce::Function,
-	iterators::Tuple,args...;kwargs...) where {T}
+function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tuple,args...;kwargs...)
 
 	procs_used = workersactive(iterators)
 
 	num_workers = length(procs_used);
 	hostnames = gethostnames(procs_used);
 	nodes = nodenames(hostnames);
-	procid_rank0_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
+	procid_rank1_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
 
 	nprocs_node_dict = nprocs_node(procs_used)
-	node_channels = Dict(node=>RemoteChannel(()->Channel{T}(nprocs_node_dict[node]),procid_node)
-		for (node,procid_node) in zip(nodes,procid_rank0_on_node))
+	node_channels = Dict(
+		node=>RemoteChannel(()->Channel{Any}(nprocs_node_dict[node]),procid_node)
+			for (node,procid_node) in zip(nodes,procid_rank1_on_node))
 
-	# Worker at which final reduction takes place
-	p_final = first(procid_rank0_on_node)
+	# Worker at which the final reduction takes place
+	p_final = first(procid_rank1_on_node)
 
-	sum_channel = RemoteChannel(()->Channel{T}(length(procid_rank0_on_node)),p_final)
-	result = nothing
+	finalnode_reducechannel = RemoteChannel(()->Channel{Any}(length(procid_rank1_on_node)),p_final)
+
+	Ntasks_total = num_workers + length(procid_rank1_on_node) + 1
+
+	result_channel = RemoteChannel(()->Channel{Any}(1))
 
 	# Run the function on each processor and compute the reduction at each node
 	@sync for (rank,(p,node)) in enumerate(zip(procs_used,hostnames))
 		@async begin
 			
-			node_remotechannel = node_channels[node]
+			eachnode_reducechannel = node_channels[node]
+			
 			np_node = nprocs_node_dict[node]
 			
 			iterable_on_proc = evenlyscatterproduct(iterators,num_workers,rank)
-			@spawnat p put!(node_remotechannel,
-				fmap(iterable_on_proc,args...;kwargs...))
 
-			@async if p in procid_rank0_on_node
-				f = @spawnat p put!(sum_channel,
-					freduce(take!(node_remotechannel) for i=1:np_node))
-				wait(f)
-				@spawnat p finalize(node_remotechannel)
+			@spawnat p begin
+				try
+					res = fmap(iterable_on_proc,args...;kwargs...)
+					put!(eachnode_reducechannel,res)
+				catch e
+					throwRemoteException(e)
+				finally
+					if p ∉ procid_rank1_on_node
+						finalize(eachnode_reducechannel)
+					end
+				end
 			end
 
-			@async if p==p_final
-				result = @fetchfrom p_final freduce(take!(sum_channel)
-					for i=1:length(procid_rank0_on_node))
-				@spawnat p finalize(sum_channel)
+			@async if p in procid_rank1_on_node
+				@spawnat p begin
+					try
+						res = freduce(take!(eachnode_reducechannel) for i=1:np_node)
+						put!(finalnode_reducechannel,res)
+					catch e
+						throwRemoteException(e)
+					finally
+						finalize(eachnode_reducechannel)
+						if p != p_final
+							finalize(finalnode_reducechannel)
+						end
+					end
+				end
+			end
+
+			@async if p == p_final
+				@spawnat p begin
+					try
+						res = freduce(take!(finalnode_reducechannel) 
+								for i=1:length(procid_rank1_on_node))
+						
+						put!(result_channel,res)
+					catch e
+						throwRemoteException(e)
+					finally
+						finalize(finalnode_reducechannel)
+
+						if p != result_channel.where
+							finalize(result_channel)
+						end
+					end
+				end
 			end
 		end
 	end
 
-	return result
+	take!(result_channel)
 end
 
-function pmapreduce_commutative(::Type{T},fmap::Function,freduce::Function,
-	itp::Iterators.ProductIterator,args...;kwargs...) where {T}
+function pmapreduce_commutative(fmap::Function,freduce::Function,
+	itp::Iterators.ProductIterator,args...;kwargs...)
 
-	pmapreduce_commutative(T,fmap,freduce,itp.iterators,args...;kwargs...)
-end
-
-function pmapreduce_commutative(::Type{T},fmap::Function,freduce::Function,
-	iterable,args...;kwargs...) where {T}
-
-	pmapreduce_commutative(T,fmap,freduce,(iterable,),args...;kwargs...)
+	pmapreduce_commutative(fmap,freduce,itp.iterators,args...;kwargs...)
 end
 
 function pmapreduce_commutative(fmap::Function,freduce::Function,iterable,args...;kwargs...)
-	pmapreduce_commutative(Any,fmap,freduce,iterable,args...;kwargs...)
+	pmapreduce_commutative(fmap,freduce,(iterable,),args...;kwargs...)
 end
 
-function pmapreduce_commutative_elementwise(::Type{T},fmap::Function,freduce::Function,
-	iterable,args...;kwargs...) where {T}
-
-	pmapreduce_commutative(T,plist->freduce(asyncmap(x->fmap(x...,args...;kwargs...),plist)),
+function pmapreduce_commutative_elementwise(fmap::Function,freduce::Function,iterable,args...;kwargs...)
+	pmapreduce_commutative(plist->freduce(asyncmap(x->fmap(x...,args...;kwargs...),plist)),
 		freduce,iterable,args...;kwargs...)
-end
-
-function pmapreduce_commutative_elementwise(fmap::Function,freduce::Function,
-	iterable,args...;kwargs...)
-
-	pmapreduce_commutative_elementwise(Any,fmap,freduce,iterable,args...;kwargs...)
 end
 
 function pmapsum(fmap::Function,iterable,args...;kwargs...)
 	pmapreduce_commutative(fmap,sum,iterable,args...;kwargs...)
 end
 
-function pmapsum(::Type{T},fmap::Function,iterable,args...;kwargs...) where {T}
-	pmapreduce_commutative(T,fmap,sum,iterable,args...;kwargs...)
-end
-
 function pmapsum_elementwise(fmap::Function,iterable,args...;kwargs...)
-	pmapsum_elementwise(Any,fmap,iterable,args...;kwargs...)
-end
-
-function pmapsum_elementwise(::Type{T},fmap::Function,iterable,args...;kwargs...) where {T}
-	pmapsum(T,plist->sum(asyncmap(x->fmap(x...,args...;kwargs...),plist)),iterable)
+	pmapsum(plist->sum(asyncmap(x->fmap(x...,args...;kwargs...),plist)),iterable)
 end
 
 # Store the processor id with the value
@@ -644,72 +664,97 @@ struct pval{T}
 	parent :: T
 end
 
-function pmapreduce(::Type{T},fmap::Function,freduce::Function,
-	iterable::Tuple,args...;kwargs...) where {T}
+function pmapreduce(fmap::Function,freduce::Function,iterable::Tuple,args...;kwargs...)
 
 	procs_used = workersactive(iterable)
 
 	num_workers = length(procs_used);
 	hostnames = gethostnames(procs_used);
 	nodes = nodenames(hostnames);
-	procid_rank0_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
+	procid_rank1_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
 
 	nprocs_node_dict = nprocs_node(procs_used)
-	node_channels = Dict(node=>RemoteChannel(()->Channel{T}(nprocs_node_dict[node]),procid_node)
-		for (node,procid_node) in zip(nodes,procid_rank0_on_node))
+	node_channels = Dict(
+		node=>RemoteChannel(()->Channel{Any}(nprocs_node_dict[node]),procid_node)
+			for (node,procid_node) in zip(nodes,procid_rank1_on_node))
 
-	# Worker at which final reduction takes place
-	p_final = first(procid_rank0_on_node)
+	# Worker at which the final reduction takes place
+	p_final = first(procid_rank1_on_node)
 
-	reduce_channel = RemoteChannel(()->Channel{T}(length(procid_rank0_on_node)),p_final)
-	result = nothing
+	finalnode_reducechannel = RemoteChannel(()->Channel{Any}(length(procid_rank1_on_node)),p_final)
+
+	result_channel = RemoteChannel(()->Channel{Any}(1))
 
 	# Run the function on each processor and compute the sum at each node
 	@sync for (rank,(p,node)) in enumerate(zip(procs_used,hostnames))
 		@async begin
 			
-			node_remotechannel = node_channels[node]
+			eachnode_reducechannel = node_channels[node]
+
 			np_node = nprocs_node_dict[node]
 			
 			iterable_on_proc = evenlyscatterproduct(iterable,num_workers,rank)
-			@spawnat p put!(node_remotechannel,
-				pval(p,fmap(iterable_on_proc,args...;kwargs...)))
-
-			@async if p in procid_rank0_on_node
-				f = @spawnat p begin 
-					vals = [take!(node_remotechannel) for i=1:np_node ]
-					sort!(vals,by=x->x.p)
-					put!(reduce_channel,pval(p,freduce(v.parent for v in vals))	)
-				end
-				wait(f)
-				@spawnat p finalize(node_remotechannel)
+			@spawnat p begin
+				try
+					res = pval(p,fmap(iterable_on_proc,args...;kwargs...))
+					put!(eachnode_reducechannel,res)
+				catch e
+					throwRemoteException(e)
+				finally
+					if p ∉ procid_rank1_on_node
+						finalize(eachnode_reducechannel)
+					end
+				end				
 			end
 
-			@async if p==p_final
-				result = @fetchfrom p_final begin
-					vals = [take!(reduce_channel) for i=1:length(procid_rank0_on_node)]
-					sort!(vals,by=x->x.p)
-					freduce(v.parent for v in vals)
+			@async if p in procid_rank1_on_node
+				@spawnat p begin
+					try
+						vals = [take!(eachnode_reducechannel) for i=1:np_node]
+						sort!(vals,by=x->x.p)
+						res = pval(p,freduce(v.parent for v in vals))	
+						put!(finalnode_reducechannel,res)
+					catch e
+						throwRemoteException(e)
+					finally
+						finalize(eachnode_reducechannel)
+						if p != p_final
+							finalize(finalnode_reducechannel)
+						end
+					end
 				end
-				@spawnat p finalize(reduce_channel)
+			end
+
+			@async if p == p_final
+				@spawnat p begin
+					try
+						vals = [take!(finalnode_reducechannel) for i=1:length(procid_rank1_on_node)]
+						sort!(vals,by=x->x.p)
+						res = freduce(v.parent for v in vals)
+						put!(result_channel,res)
+					catch e
+						throwRemoteException(e)
+					finally
+						finalize(finalnode_reducechannel)
+						if p != result_channel.where
+							finalize(result_channel)
+						end
+					end
+				end
 			end
 		end
 	end
 
-	return result
-end
-
-function pmapreduce(fmap::Function,freduce::Function,iterable::Tuple,args...;kwargs...)
-	pmapreduce(Any,fmap,freduce,iterable,args...;kwargs...)
+	take!(result_channel)
 end
 
 function pmapreduce(fmap::Function,freduce::Function,
 	itp::Iterators.ProductIterator,args...;kwargs...)
-	pmapreduce(Any,fmap,freduce,itp.iterators,args...;kwargs...)
+	pmapreduce(fmap,freduce,itp.iterators,args...;kwargs...)
 end
 
 function pmapreduce(fmap::Function,freduce::Function,iterable,args...;kwargs...)
-	pmapreduce(Any,fmap,freduce,(iterable,),args...;kwargs...)
+	pmapreduce(fmap,freduce,(iterable,),args...;kwargs...)
 end
 
 ############################################################################################

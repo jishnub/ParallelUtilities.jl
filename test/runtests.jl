@@ -345,89 +345,115 @@ end
 @testset "pmap and reduce" begin
 
 	@testset "pmapbatch" begin
-		iterable = 1:nworkers()
-	    res = pmapbatch(x->myid(),iterable)
-	    @test res == workers()
-	    res = pmapbatch(x->myid(),(iterable,))
-	    @test res == workers()
-	    res = pmapbatch(x->myid(),(iterable,1:1))
-	    @test res == workers()
+		@testset "batch" begin
+			@testset "comparison with map" begin
+				iterable = 1:nworkers()
+			    res = pmapbatch(x->myid(),iterable)
+			    @test res == workers()
+			    res = pmapbatch(x->myid(),(iterable,))
+			    @test res == workers()
+			    res = pmapbatch(x->myid(),(iterable,1:1))
+			    @test res == workers()
 
-	    iterable = 1:nworkers()-1
-	    res = pmapbatch(x->myid(),iterable)
-	    @test res == workersactive(iterable)
+			    iterable = 1:nworkers()-1
+			    res = pmapbatch(x->myid(),iterable)
+			    @test res == workersactive(iterable)
 
-	    iterable = 1:nworkers()
-	    res = pmapbatch(identity,iterable)
-	    resexp = [ProductSplit((iterable,),nworkersactive(iterable),p) for p=1:nworkersactive(iterable)]
-		@test res == resexp
-	    
-	    iterable = 1:nworkers()
-	    res = pmapbatch(identity,iterable)
-	    resexp = [ProductSplit((iterable,),nworkers(),p) for p=1:nworkers()]
-		@test res == resexp
-	    
-	    iterable = 1:2nworkers()
-	    res = pmapbatch(identity,iterable)
-	    resexp = [ProductSplit((iterable,),nworkersactive(iterable),p) for p=1:nworkersactive(iterable)]
-		@test res == resexp
-	end
+			    iterable = 1:nworkers()
+			    res = pmapbatch(identity,iterable)
+			    resexp = [ProductSplit((iterable,),nworkersactive(iterable),p) for p=1:nworkersactive(iterable)]
+				@test res == resexp
+			    
+			    iterable = 1:nworkers()
+			    res = pmapbatch(identity,iterable)
+			    resexp = [ProductSplit((iterable,),nworkers(),p) for p=1:nworkers()]
+				@test res == resexp
+			    
+			    iterable = 1:2nworkers()
+			    res = pmapbatch(identity,iterable)
+			    resexp = [ProductSplit((iterable,),nworkersactive(iterable),p) for p=1:nworkersactive(iterable)]
+				@test res == resexp
+			end
 
-	@testset "pmapbatch_elementwise" begin
-	    iterable = 1:nworkers()
-	    res = pmapbatch_elementwise(identity,iterable)
-	    @test res == iterable
+			@testset "errors" begin
+			    @test_throws RemoteException pmapbatch(x->throw(BoundsError()),1:10)
+			end
+		end
+		
+		@testset "elementwise" begin
+			@testset "comparison with map" begin
+			    iterable = 1:nworkers()
+			    res = pmapbatch_elementwise(identity,iterable)
+			    @test res == iterable
 
-		iterable = 1:20
-	    res = pmapbatch_elementwise(x->x^2,iterable)
-	    @test res == iterable.^2
+				iterable = 1:20
+			    res = pmapbatch_elementwise(x->x^2,iterable)
+			    @test res == iterable.^2
+			end
+
+		    @testset "errors" begin
+			    @test_throws RemoteException pmapbatch_elementwise(x->throw(BoundsError()),1:10)
+			end
+		end
+
+		
 	end
 
 	@testset "pmapsum" begin
+		@testset "batch" begin
+		    @testset "worker id" begin
+			    @test pmapsum(x->workerrank(),1:nworkers()) == sum(1:nworkers())
+			    @test pmapsum(x->workerrank(),(1:nworkers(),)) == sum(1:nworkers())
+			    @test pmapsum(x->workerrank(),(1:nworkers(),1:1)) == sum(1:nworkers())
+			    @test pmapsum(x->myid(),1:nworkers()) == sum(workers())
+		    end
+		    
+		    @testset "one iterator" begin
+			    rng = 1:100
+			    @test pmapsum(x->sum(y[1] for y in x),rng) == sum(rng)
+			    @test pmapsum(x->sum(y[1] for y in x),Iterators.product(rng)) == sum(rng)
+			    @test pmapsum(x->sum(y[1] for y in x),(rng,)) == sum(rng)
+		    end
 
-	    @testset "worker id" begin
-		    @test pmapsum(x->workerrank(),1:nworkers()) == sum(1:nworkers())
-		    @test pmapsum(x->workerrank(),(1:nworkers(),)) == sum(1:nworkers())
-		    @test pmapsum(x->workerrank(),(1:nworkers(),1:1)) == sum(1:nworkers())
-		    @test pmapsum(x->myid(),1:nworkers()) == sum(workers())
-	    end
-	    
-	    @testset "one iterator" begin
-		    rng = 1:100
-		    @test pmapsum(x->sum(y[1] for y in x),rng) == sum(rng)
-		    @test pmapsum(x->sum(y[1] for y in x),Iterators.product(rng)) == sum(rng)
-		    @test pmapsum(x->sum(y[1] for y in x),(rng,)) == sum(rng)
-	    end
+		    @testset "array" begin
+		    	@test pmapsum(x->ones(2),1:nworkers()) == ones(2).*nworkers()
+		    end
 
-	    @testset "array" begin
-	    	@test pmapsum(x->ones(2),1:nworkers()) == ones(2).*nworkers()
-	    end
+		    @testset "stepped iterator" begin
+			    rng = 1:5:100
+			    @test pmapsum(x->sum(y[1] for y in x),rng) == sum(rng)
+		    end
 
-	    @testset "stepped iterator" begin
-		    rng = 1:5:100
-		    @test pmapsum(x->sum(y[1] for y in x),rng) == sum(rng)
-	    end
+		    @testset "two iterators" begin
+			    iters = (1:100,1:2)
+			    @test pmapsum(x->sum(y[1] for y in x),iters) == sum(iters[1])*length(iters[2])
+		    end
 
-	    @testset "two iterators" begin
-		    iters = (1:100,1:2)
-		    @test pmapsum(x->sum(y[1] for y in x),iters) == sum(iters[1])*length(iters[2])
-	    end
+		    @testset "errors" begin
+		        @test_throws RemoteException pmapsum(x->throws(BoundsError()),1:10)
+		    end
+		end
+
+		@testset "elementwise" begin
+			@testset "comparison with map" begin
+			    iterable = 1:100
+			    res = pmapsum_elementwise(identity,iterable)
+			    @test res == sum(iterable)
+
+			    iterable = 1:100
+			    res = pmapsum_elementwise(x->x^2,iterable)
+			    @test res == sum(x->x^2,iterable)
+			    @test res == pmapsum(plist->sum(x[1]^2 for x in plist),iterable)
+			end
+
+		    @testset "errors" begin
+		        @test_throws RemoteException pmapsum_elementwise(x->throws(BoundsError()),1:10)
+		    end
+		end
 	end
 
-	@testset "pmapsum_elementwise" begin
-	    iterable = 1:100
-	    res = pmapsum_elementwise(identity,iterable)
-	    @test res == sum(iterable)
-
-	    iterable = 1:100
-	    res = pmapsum_elementwise(x->x^2,iterable)
-	    @test res == sum(x->x^2,iterable)
-	    @test res == pmapsum(plist->sum(x[1]^2 for x in plist),iterable)
-	end
-    
-	@testset "pmapreduce" begin
-		
-		@testset "unsorted" begin
+	@testset "pmapreduce_commutative" begin
+	    @testset "batch" begin
 			@testset "sum" begin
 			    @test pmapreduce_commutative(x->myid(),sum,1:nworkers()) == sum(workers())
 			    @test pmapreduce_commutative(x->myid(),sum,(1:nworkers(),)) == sum(workers())
@@ -439,17 +465,40 @@ end
 			    @test pmapreduce_commutative(x->myid(),prod,(1:nworkers(),)) == prod(workers())
 			    @test pmapreduce_commutative(x->myid(),prod,(1:nworkers(),1:1)) == prod(workers())
 		    end
-		end
 
-		@testset "unsorted elementwise" begin
-		    iter = 1:1000
-		    res = pmapreduce_commutative_elementwise(x->x^2,sum,iter)
-		    @test res == sum(x->x^2,iter)
-		    @test res == pmapsum_elementwise(x->x^2,iter)
-		    @test res == pmapsum(plist->sum(x[1]^2 for x in plist),iter)
+		    @testset "errors" begin
+		        @test_throws RemoteException pmapreduce_commutative(
+												x->throws(BoundsError()),sum,1:10)
+		        @test_throws RemoteException pmapreduce_commutative(
+												identity,x->throws(BoundsError()),1:10)
+				@test_throws RemoteException pmapreduce_commutative(
+												x->throw(ErrorException("eh")),
+												x->throws(BoundsError()),1:10)
+		    end
 		end
-		
-		@testset "sorted" begin
+		@testset "elementwise" begin
+			@testset "comparison with map" begin
+			    iter = 1:1000
+			    res = pmapreduce_commutative_elementwise(x->x^2,sum,iter)
+			    @test res == sum(x->x^2,iter)
+			    @test res == pmapsum_elementwise(x->x^2,iter)
+			    @test res == pmapsum(plist->sum(x[1]^2 for x in plist),iter)
+			end
+
+			@testset "errors" begin
+				@test_throws RemoteException pmapreduce_commutative_elementwise(
+												x->throws(BoundsError()),sum,1:10)
+				@test_throws RemoteException pmapreduce_commutative_elementwise(
+												identity,x->throws(BoundsError()),1:10)
+				@test_throws RemoteException pmapreduce_commutative_elementwise(
+												x->throw(ErrorException("eh")),
+												x->throws(BoundsError()),1:10)
+			end
+		end
+	end
+    
+	@testset "pmapreduce" begin
+		@testset "batch" begin
 		    @testset "sum" begin
 			    @test pmapreduce(x->myid(),sum,1:nworkers()) == sum(workers())
 			    @test pmapreduce(x->myid(),sum,(1:nworkers(),)) == sum(workers())
@@ -471,8 +520,14 @@ end
 		    	@test pmapreduce(x->workerrank(),x->vcat(x...),1:nworkers()) == collect(1:nworkers())
 		    	@test pmapreduce(x->myid(),x->vcat(x...),1:nworkers()) == workers()
 			end
+
+			@testset "errors" begin
+			    @test_throws RemoteException pmapreduce(x->throws(BoundsError()),sum,1:10)
+				@test_throws RemoteException pmapreduce(identity,x->throws(BoundsError()),1:10)
+				@test_throws RemoteException pmapreduce(x->throw(ErrorException("eh")),
+												x->throws(BoundsError()),1:10)
+			end
 		end
-		    
 	end
 end
 
