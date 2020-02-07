@@ -33,6 +33,25 @@ julia> xrange,yrange,zrange = 1:3,2:4,3:6 # ranges should be strictly increasing
 
 There are a total of 36 possible `(x,y,z)` combinations possible given these ranges. Let's say that we would like to split the evaluation of the function over 10 processors. We describe the simple way to evaluate this and then explain how this is achieved.
 
+The set of parameters may be split up using the function `evenlyscatterproduct`. In this example each of the 10 processors receive a chunk as listed below
+
+```julia
+julia> [collect(evenlyscatterproduct((xrange,yrange,zrange),10,i)) for i=1:10]
+10-element Array{Array{Tuple{Int64,Int64,Int64},1},1}:
+ [(1, 2, 3), (2, 2, 3), (3, 2, 3), (1, 3, 3)]
+ [(2, 3, 3), (3, 3, 3), (1, 4, 3), (2, 4, 3)]
+ [(3, 4, 3), (1, 2, 4), (2, 2, 4), (3, 2, 4)]
+ [(1, 3, 4), (2, 3, 4), (3, 3, 4), (1, 4, 4)]
+ [(2, 4, 4), (3, 4, 4), (1, 2, 5), (2, 2, 5)]
+ [(3, 2, 5), (1, 3, 5), (2, 3, 5), (3, 3, 5)]
+ [(1, 4, 5), (2, 4, 5), (3, 4, 5)]           
+ [(1, 2, 6), (2, 2, 6), (3, 2, 6)]           
+ [(1, 3, 6), (2, 3, 6), (3, 3, 6)]           
+ [(1, 4, 6), (2, 4, 6), (3, 4, 6)] 
+```
+
+The first six processors receive 4 tuples of parameters each and the final four receive 3 each. This is the splitting used by the various functions described next.
+
 ## pmap-related functions
 
 The package provides versions of `pmap` with an optional reduction. These differ from the one provided by `Distributed` in a few key aspects: firstly, the iterator product of the argument is what is passed to the function and not the arguments by elementwise, so the i-th task will be `Iterator.product(args...)[i]` and not `[x[i] for x in args]`. Specifically the second set of parameters in the example above will be `(2,2,3)` and not `(2,3,4)`.
@@ -104,7 +123,11 @@ julia> pmapreduce_commutative_elementwise(x->x^2,prod,1:3)
 The function `pmapreduce` sorts the results obtained from each processor, so it is useful for concatenations.
 
 ```julia
-# We perform the job on 2 workers
+julia> workers()
+2-element Array{Int64,1}:
+ 2
+ 3
+
 # The signature is pmapreduce(fmap,freduce,iterable)
 julia> pmapreduce(x->ones(2).*myid(),x->hcat(x...),1:nworkers())
 2×2 Array{Float64,2}:
@@ -112,11 +135,24 @@ julia> pmapreduce(x->ones(2).*myid(),x->hcat(x...),1:nworkers())
  2.0  3.0
 ```
 
+The functions `pmapreduce` produces the same result as `pmapreduce_commutative` if the reduction operator is commutative (ie. the order of results received from the children workers does not matter). The function `pmapreduce_commutative` might be faster as it avoids an intermediate collection and sorting. This is what is used by the function `pmapsum` that chooses the reduction operator to be a sum.
+
+```julia
+julia> sum(workers())
+5
+
+# We compute ones(2).*sum(workers()) in parallel
+julia> pmapsum(x->ones(2).*myid(),1:nworkers())
+2-element Array{Float64,1}:
+ 5.0
+ 5.0
+```
+
 ## ProductSplit
 
 In the above examples we have talked about the tasks being distributed approximately equally among the workers without going into details about the distribution, which is what we describe here. The package provides an iterator `ProductSplit` that lists that ranges of parameters that would be passed on to each core. This may equivalently be achieved using an
 
-```Iterator.Take{Iterator.Drop{Iterator.ProductIterator}}```
+```Iterators.Take{Iterators.Drop{Iterators.ProductIterator}}```
 
 with appropriately chosen parameters, and in many ways a `ProductSplit` behaves similarly. However a `ProductSplit` supports several extra features such as `O(1)` indexing, which eliminates the need to actually iterate over it in many scenarios.
 

@@ -543,11 +543,6 @@ nprocs_node(procs_used::Vector{<:Integer} = workers()) = nprocs_node(gethostname
 # pmapsum and pmapreduce
 ############################################################################################
 
-function throwRemoteException(e::Exception)
-	c = CapturedException(e,catch_backtrace())
-	throw(RemoteException(c))
-end
-
 # This function does not sort the values, so it might be faster
 function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tuple,args...;kwargs...)
 
