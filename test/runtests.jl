@@ -215,6 +215,7 @@ end
         ps = ProductSplit(iters,np,proc_id)
         @test whichproc(iters,first(ps),np) === nothing
         @test whichproc(iters,nothing,np) === nothing
+        @test procrange_recast(ps,2) == (0:-1)
 
         iters = (1:1,2:2)
         ps = ProductSplit(iters,1,1)
@@ -264,6 +265,20 @@ end
 	        	end
 	        end
 	    end
+    end
+
+    @testset "getindex" begin
+        for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)]
+            for np=1:ntasks(iters),p=1:np
+            	ps = ProductSplit(iters,np,p)
+            	ps_col = collect(ps)
+            	for i in 1:length(ps)
+            		@test ps[i] == ps_col[i]
+            	end
+            	@test_throws ParallelUtilities.BoundsErrorPS ps[0]
+            	@test_throws ParallelUtilities.BoundsErrorPS ps[length(ps)+1]
+            end
+        end
     end
 end
 
@@ -327,6 +342,10 @@ end
         itp = Iterators.product(iters...)
         @test nworkersactive(itp) == nworkersactive(iters)
         @test workersactive(itp) == workersactive(iters)
+
+        ps = ProductSplit(iters,2,1)
+        @test nworkersactive(ps) == nworkersactive(iters)
+        @test workersactive(ps) == workersactive(iters)
     end
 
     @testset "hostnames" begin
@@ -354,6 +373,8 @@ end
 			    @test res == workers()
 			    res = pmapbatch(x->myid(),(iterable,1:1))
 			    @test res == workers()
+			    res = pmapbatch(x->myid(),iterable,num_workers=1)
+			    @test res == workers()[1:1]
 
 			    iterable = 1:nworkers()-1
 			    res = pmapbatch(x->myid(),iterable)
@@ -371,6 +392,11 @@ end
 			    
 			    iterable = 1:2nworkers()
 			    res = pmapbatch(identity,iterable)
+			    resexp = [ProductSplit((iterable,),nworkersactive(iterable),p) for p=1:nworkersactive(iterable)]
+				@test res == resexp
+			    
+			    iterable = 1:2nworkers()
+			    res = pmapbatch(identity,Iterators.product(iterable))
 			    resexp = [ProductSplit((iterable,),nworkersactive(iterable),p) for p=1:nworkersactive(iterable)]
 				@test res == resexp
 			end

@@ -675,13 +675,13 @@ function pmapreduce(fmap::Function,freduce::Function,iterable::Tuple,args...;kwa
 
 	nprocs_node_dict = nprocs_node(procs_used)
 	node_channels = Dict(
-		node=>RemoteChannel(()->Channel{Any}(nprocs_node_dict[node]),procid_node)
+		node=>RemoteChannel(()->Channel{pval}(nprocs_node_dict[node]),procid_node)
 			for (node,procid_node) in zip(nodes,procid_rank1_on_node))
 
 	# Worker at which the final reduction takes place
 	p_final = first(procid_rank1_on_node)
 
-	finalnode_reducechannel = RemoteChannel(()->Channel{Any}(length(procid_rank1_on_node)),p_final)
+	finalnode_reducechannel = RemoteChannel(()->Channel{pval}(length(procid_rank1_on_node)),p_final)
 
 	result_channel = RemoteChannel(()->Channel{Any}(1))
 
@@ -761,10 +761,12 @@ end
 # pmap in batches without reduction
 ############################################################################################
 
-function pmapbatch(f::Function,iterable::Tuple,args...;kwargs...)
+function pmapbatch(f::Function,iterable::Tuple,args...;
+	num_workers = nworkersactive(iterable),kwargs...)
+
 	procs_used = workersactive(iterable)
-	num_workers = get(kwargs,:num_workers,length(procs_used))
-	if num_workers<length(procs_used)
+
+	if num_workers < length(procs_used)
 		procs_used = procs_used[1:num_workers]
 	end
 	num_workers = length(procs_used)
