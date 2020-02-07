@@ -387,6 +387,11 @@ end
 
 @testset "pmap and reduce" begin
 
+	exceptiontype = RemoteException
+	if VERSION >= v"1.3"
+		exceptiontype = CompositeException
+	end
+
 	@testset "pmapbatch" begin
 		@testset "batch" begin
 			@testset "comparison with map" begin
@@ -426,7 +431,7 @@ end
 			end
 
 			@testset "errors" begin
-			    @test_throws RemoteException pmapbatch(x->throw(BoundsError()),1:10)
+			    @test_throws exceptiontype pmapbatch(x->throw(BoundsError()),1:10)
 			end
 		end
 		
@@ -442,11 +447,9 @@ end
 			end
 
 		    @testset "errors" begin
-			    @test_throws RemoteException pmapbatch_elementwise(x->throw(BoundsError()),1:10)
+			    @test_throws exceptiontype pmapbatch_elementwise(x->throw(BoundsError()),1:10)
 			end
 		end
-
-		
 	end
 
 	@testset "pmapsum" begin
@@ -482,7 +485,7 @@ end
 		    end
 
 		    @testset "errors" begin
-		        @test_throws RemoteException pmapsum(x->throws(BoundsError()),1:10)
+		        @test_throws exceptiontype pmapsum(x->throws(BoundsError()),1:10)
 		    end
 		end
 
@@ -503,7 +506,7 @@ end
 			end
 
 		    @testset "errors" begin
-		        @test_throws RemoteException pmapsum_elementwise(x->throws(BoundsError()),1:10)
+		        @test_throws exceptiontype pmapsum_elementwise(x->throws(BoundsError()),1:10)
 		    end
 		end
 	end
@@ -527,11 +530,11 @@ end
 		    end
 
 		    @testset "errors" begin
-		        @test_throws RemoteException pmapreduce_commutative(
+		        @test_throws exceptiontype pmapreduce_commutative(
 												x->throws(BoundsError()),sum,1:10)
-		        @test_throws RemoteException pmapreduce_commutative(
+		        @test_throws exceptiontype pmapreduce_commutative(
 												identity,x->throws(BoundsError()),1:10)
-				@test_throws RemoteException pmapreduce_commutative(
+				@test_throws exceptiontype pmapreduce_commutative(
 												x->throw(ErrorException("eh")),
 												x->throws(BoundsError()),1:10)
 		    end
@@ -550,11 +553,11 @@ end
 			end
 
 			@testset "errors" begin
-				@test_throws RemoteException pmapreduce_commutative_elementwise(
+				@test_throws exceptiontype pmapreduce_commutative_elementwise(
 												x->throws(BoundsError()),sum,1:10)
-				@test_throws RemoteException pmapreduce_commutative_elementwise(
+				@test_throws exceptiontype pmapreduce_commutative_elementwise(
 												identity,x->throws(BoundsError()),1:10)
-				@test_throws RemoteException pmapreduce_commutative_elementwise(
+				@test_throws exceptiontype pmapreduce_commutative_elementwise(
 												x->throw(ErrorException("eh")),
 												x->throws(BoundsError()),1:10)
 			end
@@ -588,9 +591,9 @@ end
 			end
 
 			@testset "errors" begin
-			    @test_throws RemoteException pmapreduce(x->throws(BoundsError()),sum,1:10)
-				@test_throws RemoteException pmapreduce(identity,x->throws(BoundsError()),1:10)
-				@test_throws RemoteException pmapreduce(x->throw(ErrorException("eh")),
+			    @test_throws exceptiontype pmapreduce(x->throws(BoundsError()),sum,1:10)
+				@test_throws exceptiontype pmapreduce(identity,x->throws(BoundsError()),1:10)
+				@test_throws exceptiontype pmapreduce(x->throw(ErrorException("eh")),
 												x->throws(BoundsError()),1:10)
 			end
 		end

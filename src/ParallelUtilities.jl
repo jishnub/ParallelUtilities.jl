@@ -557,26 +557,31 @@ function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tupl
 	hostnames = gethostnames(procs_used);
 	nodes = nodenames(hostnames);
 	procid_rank1_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
+	Nnodes_reduction = length(procid_rank1_on_node)
 
 	nprocs_node_dict = nprocs_node(procs_used)
 	node_channels = Dict(
-		node=>RemoteChannel(()->Channel{Any}(nprocs_node_dict[node]),procid_node)
+		node=>(
+			out = RemoteChannel(()->Channel{Any}(nprocs_node_dict[node]),procid_node),
+			err = RemoteChannel(()->Channel{Bool}(nprocs_node_dict[node]),procid_node),
+			)
 			for (node,procid_node) in zip(nodes,procid_rank1_on_node))
 
 	# Worker at which the final reduction takes place
 	p_final = first(procid_rank1_on_node)
 
 	finalnode_reducechannel = RemoteChannel(()->Channel{Any}(length(procid_rank1_on_node)),p_final)
-
-	Ntasks_total = num_workers + length(procid_rank1_on_node) + 1
+	finalnode_errorchannel = RemoteChannel(()->Channel{Bool}(length(procid_rank1_on_node)),p_final)
 
 	result_channel = RemoteChannel(()->Channel{Any}(1))
+	error_channel = RemoteChannel(()->Channel{Bool}(1))
 
 	# Run the function on each processor and compute the reduction at each node
 	@sync for (rank,(p,node)) in enumerate(zip(procs_used,hostnames))
 		@async begin
 			
-			eachnode_reducechannel = node_channels[node]
+			eachnode_reducechannel = node_channels[node].out
+			eachnode_errorchannel = node_channels[node].err
 			
 			np_node = nprocs_node_dict[node]
 			
@@ -586,10 +591,13 @@ function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tupl
 				try
 					res = fmap(iterable_on_proc,args...;kwargs...)
 					put!(eachnode_reducechannel,res)
+					put!(eachnode_errorchannel,false)
 				catch e
-					throwRemoteException(e)
+					put!(eachnode_errorchannel,true)
+					rethrow()
 				finally
 					if p ∉ procid_rank1_on_node
+						finalize(eachnode_errorchannel)
 						finalize(eachnode_reducechannel)
 					end
 				end
@@ -598,13 +606,21 @@ function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tupl
 			@async if p in procid_rank1_on_node
 				@spawnat p begin
 					try
-						res = freduce(take!(eachnode_reducechannel) for i=1:np_node)
-						put!(finalnode_reducechannel,res)
+						anyerror = any(take!(eachnode_errorchannel) for i=1:np_node)
+						if !anyerror
+							res = freduce(take!(eachnode_reducechannel) for i=1:np_node)
+							put!(finalnode_reducechannel,res)
+							put!(finalnode_errorchannel,false)
+						else
+							put!(finalnode_errorchannel,true)
+						end
 					catch e
-						throwRemoteException(e)
+						put!(finalnode_errorchannel,true)
+						rethrow()
 					finally
 						finalize(eachnode_reducechannel)
 						if p != p_final
+							finalize(finalnode_errorchannel)
 							finalize(finalnode_reducechannel)
 						end
 					end
@@ -614,17 +630,26 @@ function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tupl
 			@async if p == p_final
 				@spawnat p begin
 					try
-						res = freduce(take!(finalnode_reducechannel) 
-								for i=1:length(procid_rank1_on_node))
-						
-						put!(result_channel,res)
+						anyerror = any(take!(finalnode_errorchannel) for i=1:Nnodes_reduction)
+						if !anyerror
+							res = freduce(take!(finalnode_reducechannel) for i=1:Nnodes_reduction)
+							put!(result_channel,res)
+							put!(error_channel,false)
+						else
+							put!(error_channel,true)
+						end
 					catch e
-						throwRemoteException(e)
+						put!(error_channel,true)
+						rethrow()
 					finally
+						finalize(finalnode_errorchannel)
 						finalize(finalnode_reducechannel)
 
 						if p != result_channel.where
 							finalize(result_channel)
+						end
+						if p != error_channel.where
+							finalize(error_channel)
 						end
 					end
 				end
@@ -632,7 +657,10 @@ function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tupl
 		end
 	end
 
-	take!(result_channel)
+	anyerror = take!(error_channel)
+	if !anyerror
+		return take!(result_channel)
+	end
 end
 
 function pmapreduce_commutative(fmap::Function,freduce::Function,
@@ -672,24 +700,31 @@ function pmapreduce(fmap::Function,freduce::Function,iterable::Tuple,args...;kwa
 	hostnames = gethostnames(procs_used);
 	nodes = nodenames(hostnames);
 	procid_rank1_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
+	Nnodes_reduction = length(procid_rank1_on_node)
 
 	nprocs_node_dict = nprocs_node(procs_used)
 	node_channels = Dict(
-		node=>RemoteChannel(()->Channel{pval}(nprocs_node_dict[node]),procid_node)
+		node=>(
+			out = RemoteChannel(()->Channel{Any}(nprocs_node_dict[node]),procid_node),
+			err = RemoteChannel(()->Channel{Bool}(nprocs_node_dict[node]),procid_node),
+			)
 			for (node,procid_node) in zip(nodes,procid_rank1_on_node))
 
 	# Worker at which the final reduction takes place
 	p_final = first(procid_rank1_on_node)
 
 	finalnode_reducechannel = RemoteChannel(()->Channel{pval}(length(procid_rank1_on_node)),p_final)
+	finalnode_errorchannel = RemoteChannel(()->Channel{Bool}(length(procid_rank1_on_node)),p_final)
 
 	result_channel = RemoteChannel(()->Channel{Any}(1))
+	error_channel = RemoteChannel(()->Channel{Bool}(1))
 
 	# Run the function on each processor and compute the sum at each node
 	@sync for (rank,(p,node)) in enumerate(zip(procs_used,hostnames))
 		@async begin
 			
-			eachnode_reducechannel = node_channels[node]
+			eachnode_reducechannel = node_channels[node].out
+			eachnode_errorchannel = node_channels[node].err
 
 			np_node = nprocs_node_dict[node]
 			
@@ -698,10 +733,13 @@ function pmapreduce(fmap::Function,freduce::Function,iterable::Tuple,args...;kwa
 				try
 					res = pval(p,fmap(iterable_on_proc,args...;kwargs...))
 					put!(eachnode_reducechannel,res)
+					put!(eachnode_errorchannel,false)
 				catch e
-					throwRemoteException(e)
+					put!(eachnode_errorchannel,true)
+					rethrow()
 				finally
 					if p ∉ procid_rank1_on_node
+						finalize(eachnode_errorchannel)
 						finalize(eachnode_reducechannel)
 					end
 				end				
@@ -710,15 +748,24 @@ function pmapreduce(fmap::Function,freduce::Function,iterable::Tuple,args...;kwa
 			@async if p in procid_rank1_on_node
 				@spawnat p begin
 					try
-						vals = [take!(eachnode_reducechannel) for i=1:np_node]
-						sort!(vals,by=x->x.p)
-						res = pval(p,freduce(v.parent for v in vals))	
-						put!(finalnode_reducechannel,res)
+						anyerror = any(take!(eachnode_errorchannel) for i=1:np_node)
+						if !anyerror
+							vals = [take!(eachnode_reducechannel) for i=1:np_node]
+							sort!(vals,by=x->x.p)
+							res = pval(p,freduce(v.parent for v in vals))	
+							put!(finalnode_reducechannel,res)
+							put!(finalnode_errorchannel,false)
+						else
+							put!(finalnode_errorchannel,true)
+						end
 					catch e
-						throwRemoteException(e)
+						put!(finalnode_errorchannel,true)
+						rethrow()
 					finally
+						finalize(eachnode_errorchannel)
 						finalize(eachnode_reducechannel)
 						if p != p_final
+							finalize(finalnode_errorchannel)
 							finalize(finalnode_reducechannel)
 						end
 					end
@@ -728,16 +775,27 @@ function pmapreduce(fmap::Function,freduce::Function,iterable::Tuple,args...;kwa
 			@async if p == p_final
 				@spawnat p begin
 					try
-						vals = [take!(finalnode_reducechannel) for i=1:length(procid_rank1_on_node)]
-						sort!(vals,by=x->x.p)
-						res = freduce(v.parent for v in vals)
-						put!(result_channel,res)
+						anyerror = any(take!(finalnode_errorchannel) for i=1:Nnodes_reduction)
+						if !anyerror
+							vals = [take!(finalnode_reducechannel) for i=1:Nnodes_reduction]
+							sort!(vals,by=x->x.p)
+							res = freduce(v.parent for v in vals)
+							put!(result_channel,res)
+							put!(error_channel,false)
+						else
+							put!(error_channel,true)
+						end
 					catch e
-						throwRemoteException(e)
+						put!(error_channel,true)
+						rethrow()
 					finally
+						finalize(finalnode_errorchannel)
 						finalize(finalnode_reducechannel)
 						if p != result_channel.where
 							finalize(result_channel)
+						end
+						if p != error_channel.where
+							finalize(error_channel)
 						end
 					end
 				end
@@ -745,7 +803,10 @@ function pmapreduce(fmap::Function,freduce::Function,iterable::Tuple,args...;kwa
 		end
 	end
 
-	take!(result_channel)
+	anyerror = take!(error_channel)
+	if !anyerror
+		return take!(result_channel)
+	end
 end
 
 function pmapreduce(fmap::Function,freduce::Function,
