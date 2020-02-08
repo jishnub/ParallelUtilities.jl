@@ -11,7 +11,7 @@ Parallel mapreduce and other helpful functions for HPC, meant primarily for emba
 Install the package using
 
 ```julia
-pkg> add https://github.com/jishnub/ParallelUtilities.jl.git
+pkg> add ParallelUtilities
 julia> using ParallelUtilities 
 ```
 
