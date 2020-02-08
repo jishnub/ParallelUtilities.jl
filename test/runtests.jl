@@ -483,6 +483,14 @@ end
 			    iters = (1:100,1:2)
 			    @test pmapsum(x->sum(y[1] for y in x),iters) == sum(iters[1])*length(iters[2])
 		    end
+		    
+		    @testset "run elsewhere" begin
+		    	res_exp = sum(workers())
+		    	for p in workers()
+		    		res = @fetchfrom p pmapsum(x->myid(),1:nworkers())
+		        	@test res == res_exp
+		        end
+		    end
 
 		    @testset "errors" begin
 		        @test_throws exceptiontype pmapsum(x->throws(BoundsError()),1:10)
@@ -504,6 +512,15 @@ end
 			    @test res == sum(x->x^2,iterable)
 			    @test res == pmapsum(plist->sum(x[1]^2 for x in plist),iterable)
 			end
+
+			@testset "run elsewhere" begin
+				iterable = 1:100
+				res_exp = sum(iterable)
+		    	for p in workers()
+		    		res = @fetchfrom p pmapsum_elementwise(identity,iterable)
+		        	@test res == res_exp
+		        end
+		    end
 
 		    @testset "errors" begin
 		        @test_throws exceptiontype pmapsum_elementwise(x->throws(BoundsError()),1:10)
@@ -529,6 +546,14 @@ end
 			    @test pmapreduce_commutative(x->myid(),prod,Iterators.product(1:nworkers(),1:1)) == prod(workers())
 		    end
 
+		    @testset "run elsewhere" begin
+		    	res_exp = prod(workers())
+		    	for p in workers()
+		    		res = @fetchfrom p pmapreduce_commutative(x->myid(),prod,1:nworkers())
+		        	@test res == res_exp
+		        end
+		    end
+
 		    @testset "errors" begin
 		        @test_throws exceptiontype pmapreduce_commutative(
 												x->throws(BoundsError()),sum,1:10)
@@ -551,6 +576,15 @@ end
 			    res = pmapreduce_commutative_elementwise(x->x^2,sum,Iterators.product(iter))
 			    @test res == sum(x->x^2,iter)
 			end
+
+			@testset "run elsewhere" begin
+				iter = 1:1000
+				res_exp = sum(x->x^2,iter)
+		    	for p in workers()
+		    		res = @fetchfrom p pmapreduce_commutative_elementwise(x->x^2,sum,iter)
+		        	@test res == res_exp
+		        end
+		    end
 
 			@testset "errors" begin
 				@test_throws exceptiontype pmapreduce_commutative_elementwise(
@@ -589,6 +623,14 @@ end
 		    	@test pmapreduce(x->workerrank(),x->vcat(x...),1:nworkers()) == collect(1:nworkers())
 		    	@test pmapreduce(x->myid(),x->vcat(x...),1:nworkers()) == workers()
 			end
+
+			@testset "run elsewhere" begin
+				res_exp = sum(workers())
+		    	for p in workers()
+		    		res = @fetchfrom p pmapreduce(x->myid(),sum,1:nworkers())
+		        	@test res == res_exp
+		        end
+		    end
 
 			@testset "errors" begin
 			    @test_throws exceptiontype pmapreduce(x->throws(BoundsError()),sum,1:10)

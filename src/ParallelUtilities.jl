@@ -577,6 +577,8 @@ function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tupl
 			
 			eachnode_reducechannel = node_channels[node].out
 			eachnode_errorchannel = node_channels[node].err
+
+			p_parent = eachnode_reducechannel.where
 			
 			np_node = nprocs_node_dict[node]
 			
@@ -591,14 +593,33 @@ function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tupl
 					put!(eachnode_errorchannel,true)
 					rethrow()
 				finally
-					if p ∉ procid_rank1_on_node
+					# Don't need references to the intermediate reduction channels on other nodes
+					for (node_i,channels_i) in node_channels
+						if node_i == node
+							continue
+						end
+
+						finalize(channels_i.out)
+						finalize(channels_i.err)
+					end
+					if p != p_parent
 						finalize(eachnode_errorchannel)
 						finalize(eachnode_reducechannel)
+						finalize(finalnode_errorchannel)
+						finalize(finalnode_reducechannel)
+					end
+					if p != p_final
+						if p != result_channel.where
+							finalize(result_channel)
+						end
+						if p != error_channel.where
+							finalize(error_channel)
+						end
 					end
 				end
 			end
 
-			@async if p in procid_rank1_on_node
+			@async if p == p_parent
 				@spawnat p begin
 					try
 						anyerror = any(take!(eachnode_errorchannel) for i=1:np_node)
@@ -613,7 +634,9 @@ function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tupl
 						put!(finalnode_errorchannel,true)
 						rethrow()
 					finally
+						finalize(eachnode_errorchannel)
 						finalize(eachnode_reducechannel)
+
 						if p != p_final
 							finalize(finalnode_errorchannel)
 							finalize(finalnode_reducechannel)
@@ -700,7 +723,7 @@ function pmapreduce(fmap::Function,freduce::Function,iterable::Tuple,args...;kwa
 	nprocs_node_dict = nprocs_node(procs_used)
 	node_channels = Dict(
 		node=>(
-			out = RemoteChannel(()->Channel{Any}(nprocs_node_dict[node]),procid_node),
+			out = RemoteChannel(()->Channel{pval}(nprocs_node_dict[node]),procid_node),
 			err = RemoteChannel(()->Channel{Bool}(nprocs_node_dict[node]),procid_node),
 			)
 			for (node,procid_node) in zip(nodes,procid_rank1_on_node))
@@ -708,18 +731,20 @@ function pmapreduce(fmap::Function,freduce::Function,iterable::Tuple,args...;kwa
 	# Worker at which the final reduction takes place
 	p_final = first(procid_rank1_on_node)
 
-	finalnode_reducechannel = RemoteChannel(()->Channel{pval}(length(procid_rank1_on_node)),p_final)
-	finalnode_errorchannel = RemoteChannel(()->Channel{Bool}(length(procid_rank1_on_node)),p_final)
+	finalnode_reducechannel = RemoteChannel(()->Channel{pval}(Nnodes_reduction),p_final)
+	finalnode_errorchannel = RemoteChannel(()->Channel{Bool}(Nnodes_reduction),p_final)
 
 	result_channel = RemoteChannel(()->Channel{Any}(1))
 	error_channel = RemoteChannel(()->Channel{Bool}(1))
 
-	# Run the function on each processor and compute the sum at each node
+	# Run the function on each processor and compute the reduction at each node
 	@sync for (rank,(p,node)) in enumerate(zip(procs_used,hostnames))
 		@async begin
 			
 			eachnode_reducechannel = node_channels[node].out
 			eachnode_errorchannel = node_channels[node].err
+
+			p_parent = eachnode_reducechannel.where
 
 			np_node = nprocs_node_dict[node]
 			
@@ -733,14 +758,33 @@ function pmapreduce(fmap::Function,freduce::Function,iterable::Tuple,args...;kwa
 					put!(eachnode_errorchannel,true)
 					rethrow()
 				finally
-					if p ∉ procid_rank1_on_node
+					# Don't need references to the intermediate reduction channels on other nodes
+					for (node_i,channels_i) in node_channels
+						if node_i == node
+							continue
+						end
+
+						finalize(channels_i.out)
+						finalize(channels_i.err)
+					end
+					if p != p_parent
 						finalize(eachnode_errorchannel)
 						finalize(eachnode_reducechannel)
+						finalize(finalnode_errorchannel)
+						finalize(finalnode_reducechannel)
 					end
-				end				
+					if p != p_final
+						if p != result_channel.where
+							finalize(result_channel)
+						end
+						if p != error_channel.where
+							finalize(error_channel)
+						end
+					end
+				end
 			end
 
-			@async if p in procid_rank1_on_node
+			@async if p == p_parent
 				@spawnat p begin
 					try
 						anyerror = any(take!(eachnode_errorchannel) for i=1:np_node)
@@ -759,6 +803,7 @@ function pmapreduce(fmap::Function,freduce::Function,iterable::Tuple,args...;kwa
 					finally
 						finalize(eachnode_errorchannel)
 						finalize(eachnode_reducechannel)
+
 						if p != p_final
 							finalize(finalnode_errorchannel)
 							finalize(finalnode_reducechannel)
@@ -786,6 +831,7 @@ function pmapreduce(fmap::Function,freduce::Function,iterable::Tuple,args...;kwa
 					finally
 						finalize(finalnode_errorchannel)
 						finalize(finalnode_reducechannel)
+
 						if p != result_channel.where
 							finalize(result_channel)
 						end
