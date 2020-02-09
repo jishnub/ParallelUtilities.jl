@@ -227,16 +227,19 @@ end
         ps = ProductSplit(iters,np,proc_id)
         @test whichproc(iters,first(ps),1) == 1
         @test whichproc(iters,(100,100,100),1) === nothing
+        @test procrange_recast(iters,ps,1) == 1:1
         @test procrange_recast(ps,1) == 1:1
 
         iters = (1:1,2:2)
         ps = ProductSplit(iters,np,proc_id)
         @test whichproc(iters,first(ps),np) === nothing
         @test whichproc(iters,nothing,np) === nothing
+        @test procrange_recast(iters,ps,2) == (0:-1)
         @test procrange_recast(ps,2) == (0:-1)
 
         iters = (1:1,2:2)
         ps = ProductSplit(iters,1,1)
+        @test procrange_recast(iters,ps,2) == 1:1
         @test procrange_recast(ps,2) == 1:1
 
         for np_new in 1:5ntasks(iters)
@@ -250,7 +253,22 @@ end
 	        end
 	        procid_new_first = whichproc(iters,first(ps),np_new)
 	        proc_new_last = whichproc(iters,last(ps),np_new)
+        	@test procrange_recast(iters,ps,np_new) == (isempty(ps) ? (0:-1) : (procid_new_first:proc_new_last))
         	@test procrange_recast(ps,np_new) == (isempty(ps) ? (0:-1) : (procid_new_first:proc_new_last))
+        end
+
+        @testset "different set" begin
+	        iters = (1:100,1:4000)
+	        ps = ProductSplit((20:30,1:1),2,1)
+	        @test procrange_recast(iters,ps,700) == 1:1
+	        ps = ProductSplit((20:30,1:1),2,2)
+	        @test procrange_recast(iters,ps,700) == 1:1
+
+	        iters = (1:1,2:2)
+	        ps = ProductSplit((20:30,2:2),2,1)
+	        @test_throws ParallelUtilities.TaskNotPresentError procrange_recast(iters,ps,3)
+	        ps = ProductSplit((1:30,2:2),2,1)
+	        @test_throws ParallelUtilities.TaskNotPresentError procrange_recast(iters,ps,3)
         end
     end
 

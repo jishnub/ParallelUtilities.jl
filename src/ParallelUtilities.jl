@@ -43,6 +43,14 @@ function Base.showerror(io::IO,err::DecreasingIteratorError)
 	print(io,"all the iterators need to be strictly increasing")
 end
 
+struct TaskNotPresentError{T,U} <: Exception
+	t :: T
+	task :: U
+end
+function Base.showerror(io::IO,err::TaskNotPresentError)
+	print(io,"could not find the task $task in the list $t")
+end
+
 struct BoundsErrorPS{T}
 	ps :: T
 	ind :: Int
@@ -438,22 +446,33 @@ end
 
 whichproc(iterators::Tuple,::Nothing,np::Int) = nothing
 
-# This function is necessary when we're changing np
-function procrange_recast(ps::ProductSplit,np_new::Int)
+# This function tells us the range of processors that would be involved
+# if we are to compute the tasks contained in the list ps on np_new processors.
+# The total list of tasks is contained in iterators, and might differ from 
+# ps.iterators (eg if ps contains a subsection of the parameter set)
+function procrange_recast(iterators::Tuple,ps::ProductSplit,np_new::Int)
 	
 	if isempty(ps)
 		return 0:-1 # empty range
 	end
 
-	procid_start = whichproc(ps.iterators,first(ps),np_new)
+	procid_start = whichproc(iterators,first(ps),np_new)
+	if procid_start === nothing
+		throw(TaskNotPresentError(iterators,first(ps)))
+	end
 	if length(ps) == 1
 		procid_end = procid_start
 	else
-		procid_end = whichproc(ps.iterators,last(ps),np_new)
+		procid_end = whichproc(iterators,last(ps),np_new)
+		if procid_end === nothing
+			throw(TaskNotPresentError(iterators,last(ps)))
+		end
 	end
 	
 	return procid_start:procid_end
 end
+
+procrange_recast(ps::ProductSplit,np_new::Int) = procrange_recast(ps.iterators,ps,np_new)
 
 function localindex(ps::ProductSplit{T},val::T) where {T}
 	# Can carry out a binary search
@@ -548,7 +567,7 @@ function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tupl
 
 	procs_used = workersactive(iterators)
 
-	num_workers = length(procs_used);
+	num_workers_active = length(procs_used);
 	hostnames = gethostnames(procs_used);
 	nodes = nodenames(hostnames);
 	procid_rank1_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
@@ -582,7 +601,7 @@ function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tupl
 			
 			np_node = nprocs_node_dict[node]
 			
-			iterable_on_proc = evenlyscatterproduct(iterators,num_workers,rank)
+			iterable_on_proc = evenlyscatterproduct(iterators,num_workers_active,rank)
 
 			@spawnat p begin
 				try
@@ -714,7 +733,7 @@ function pmapreduce(fmap::Function,freduce::Function,iterable::Tuple,args...;kwa
 
 	procs_used = workersactive(iterable)
 
-	num_workers = length(procs_used);
+	num_workers_active = length(procs_used);
 	hostnames = gethostnames(procs_used);
 	nodes = nodenames(hostnames);
 	procid_rank1_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
@@ -748,7 +767,7 @@ function pmapreduce(fmap::Function,freduce::Function,iterable::Tuple,args...;kwa
 
 			np_node = nprocs_node_dict[node]
 			
-			iterable_on_proc = evenlyscatterproduct(iterable,num_workers,rank)
+			iterable_on_proc = evenlyscatterproduct(iterable,num_workers_active,rank)
 			@spawnat p begin
 				try
 					res = pval(p,fmap(iterable_on_proc,args...;kwargs...))
