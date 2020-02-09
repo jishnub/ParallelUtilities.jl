@@ -60,18 +60,19 @@ function Base.showerror(io::IO,err::BoundsErrorPS)
 end
 
 struct ProductSplit{T,N,Q}
-	iterators :: NTuple{N,Q}
+	iterators :: Q
 	togglelevels :: NTuple{N,Int}
 	np :: Int
 	p :: Int
 	firstind :: Int
 	lastind :: Int
 
-	function ProductSplit(iterators::NTuple{N,Q},togglelevels::NTuple{N,Int},
-		np::Int,p::Int,firstind::Int,lastind::Int) where {N,Q<:AbstractRange}
+	function ProductSplit(iterators::Tuple{Vararg{AbstractRange,N}},togglelevels::NTuple{N,Int},
+		np::Int,p::Int,firstind::Int,lastind::Int) where {N}
 
 		1 <= p <= np || throw(ProcessorNumberError(p,np))
-		T = NTuple{N,eltype(Q)}
+		T = Tuple{map(eltype,iterators)...}
+		Q = typeof(iterators)
 
 		# Ensure that all the iterators are strictly increasing
 		all(x->step(x)>0,iterators) || throw(DecreasingIteratorError())
@@ -93,8 +94,7 @@ end
 @inline ntasks(tl::Tuple) = prod(map(length,tl))
 @inline ntasks(ps::ProductSplit) = ntasks(ps.iterators)
 
-function ProductSplit(iterators::NTuple{N,Q},np::Int,p::Int) where {N,Q<:AbstractRange}
-	T = NTuple{N,eltype(Q)}
+function ProductSplit(iterators::Tuple{Vararg{AbstractRange}},np::Int,p::Int)
 	len = Base.Iterators._prod_size(iterators)
 	Nel = prod(len)
 	togglelevels = _cumprod(len)
@@ -188,7 +188,7 @@ end
 	_firstlastalongdim(pss.iterators,dim,firstindchild,lastindchild)
 end
 
-@inline Base.@propagate_inbounds function _firstlastalongdim(iterators::NTuple{N,<:Any},dim::Int,
+@inline Base.@propagate_inbounds function _firstlastalongdim(iterators::Tuple{Vararg{Any,N}},dim::Int,
 	firstindchild::Tuple,lastindchild::Tuple) where {N}
 
 	@boundscheck (1 <= dim <= N) || throw(BoundsError(iterators,dim))
@@ -211,7 +211,7 @@ function _checkrollover(ps::ProductSplit{<:Any,N},dim::Int,
 	_checkrollover(ps.iterators,dim,firstindchild,lastindchild)
 end
 
-function _checkrollover(t::NTuple{N,<:Any},dim::Int,
+function _checkrollover(t::Tuple{Vararg{Any,N}},dim::Int,
 	firstindchild::Tuple,lastindchild::Tuple) where {N}
 
 	if dim > 0

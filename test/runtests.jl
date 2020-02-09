@@ -11,6 +11,9 @@ end
 
 @testset "ProductSplit" begin
 
+	various_iters = [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6),
+		    	(1:2,Base.OneTo(4),1:3:10)]
+
 	function split_across_processors_iterators(arr::Base.Iterators.ProductIterator,num_procs,proc_id)
 
 	    num_tasks = length(arr);
@@ -71,6 +74,11 @@ end
 	    	iters = (10:-1:10,6:-2:0)
 	    	@test_throws ParallelUtilities.DecreasingIteratorError ProductSplit(iters,3,2)
     	end
+    	@testset "mixed" begin
+    	    for iters in [(1:2,4:2:6),(1:2,Base.OneTo(4),1:3:10)]
+	    		checkPSconstructor(iters)
+	    	end
+    	end
 
     	@testset "empty" begin
     	    iters = (1:1,)
@@ -80,26 +88,27 @@ end
     	end
 
     	@testset "first and last ind" begin
-    	    iters = (1:10,)
-    	    ps = ProductSplit(iters,2,1)
-    	    @test firstindex(ps) == 1
-    	    @test ps.firstind == 1
-    	    @test ps.lastind == div(length(iters[1]),2)
-    	    @test lastindex(ps) == div(length(iters[1]),2)
-    	    @test lastindex(ps) == length(ps)
-    	    ps = ProductSplit(iters,2,2)
-    	    @test ps.firstind == div(length(iters[1]),2) + 1
-    	    @test firstindex(ps) == 1
-    	    @test ps.lastind == length(iters[1])
-    	    @test lastindex(ps) == length(ps)
+    	    for iters in [(1:10,),(1:2,Base.OneTo(4),1:3:10)]
+	    	    ps = ProductSplit(iters,2,1)
+	    	    @test firstindex(ps) == 1
+	    	    @test ps.firstind == 1
+	    	    @test ps.lastind == div(ntasks(iters),2)
+	    	    @test lastindex(ps) == div(ntasks(iters),2)
+	    	    @test lastindex(ps) == length(ps)
+	    	    ps = ProductSplit(iters,2,2)
+	    	    @test ps.firstind == div(ntasks(iters),2) + 1
+	    	    @test firstindex(ps) == 1
+	    	    @test ps.lastind == ntasks(iters)
+	    	    @test lastindex(ps) == length(ps)
 
-    	    for np in length(iters[1])+1:length(iters[1])+10,
-    	    	p in length(iters[1])+1:np
+	    	    for np in ntasks(iters)+1:ntasks(iters)+10,
+	    	    	p in ntasks(iters)+1:np
 
-	    	    ps = ProductSplit(iters,np,p)
-	    	    @test ps.firstind == length(iters[1]) + 1
-	    	    @test ps.lastind == length(iters[1])
-	    	end
+		    	    ps = ProductSplit(iters,np,p)
+		    	    @test ps.firstind == ntasks(iters) + 1
+		    	    @test ps.lastind == ntasks(iters)
+		    	end
+		    end
     	end
     end
 
@@ -108,23 +117,21 @@ end
 
         	@test ParallelUtilities._first(()) == ()
 
-            for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)],
-            	np=1:5ntasks(iters)
+            for iters in various_iters,np=1:5ntasks(iters)
 
 	            ps = ProductSplit(iters,np,1)
 	            @test first(ps) == ( isempty(ps) ? nothing : map(first,iters) )
 	        end
 
 	        iters = (1:1,)
-	        ps = ProductSplit(iters,2length(iters[1]),length(iters[1])+1) # must be empty
+	        ps = ProductSplit(iters,2ntasks(iters),ntasks(iters)+1) # must be empty
 	        @test first(ps) === nothing
         end
         @testset "last" begin
 
         	@test ParallelUtilities._last(()) == ()
 
-            for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)],
-            	np=1:5ntasks(iters)
+            for iters in various_iters,np=1:5ntasks(iters)
 
 	            ps = ProductSplit(iters,np,np)
 	            @test last(ps) == ( isempty(ps) ? nothing : map(last,iters) )
@@ -155,8 +162,7 @@ end
 			    end
 			end
 
-		    for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)],
-		    	fn in [maximum,minimum,extrema]
+		    for iters in various_iters,	fn in [maximum,minimum,extrema]
 
 		        checkPSextrema(iters,fn)
 		    end
@@ -165,7 +171,8 @@ end
     	@testset "extremadims" begin
     		ps = ProductSplit((1:10,),2,1)
     		@test ParallelUtilities._extremadims(ps,1,()) == ()
-    		for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)]
+    		for iters in various_iters
+
     			dims = length(iters)
 	    		for np = 1:5ntasks(iters), proc_id = 1:np
 	    	    	ps = ProductSplit(iters,np,proc_id)
@@ -208,7 +215,7 @@ end
 		    end
     	end
 
-        for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)]
+        for iters in various_iters
 	        checkifpresent(iters)
 	    end
 
@@ -219,7 +226,7 @@ end
         n = 10
         np,proc_id = 5,3
         @test evenlyscatterproduct(n,np,proc_id) == ProductSplit((1:n,),np,proc_id)
-        for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)]
+        for iters in various_iters
         	@test evenlyscatterproduct(iters,np,proc_id) == ProductSplit(iters,np,proc_id)
         	itp = Iterators.product(iters...)
         	@test evenlyscatterproduct(itp,np,proc_id) == ProductSplit(iters,np,proc_id)
@@ -246,6 +253,12 @@ end
         ps = ProductSplit(iters,1,1)
         @test procrange_recast(iters,ps,2) == 1:1
         @test procrange_recast(ps,2) == 1:1
+
+        iters = (Base.OneTo(2),2:4)
+        ps = ProductSplit(iters,2,1)
+        @test procrange_recast(iters,ps,1) == 1:1
+        @test procrange_recast(iters,ps,2) == 1:1
+        @test procrange_recast(iters,ps,ntasks(iters)) == 1:length(ps)
 
         for np_new in 1:5ntasks(iters)
         	for proc_id_new=1:np_new
@@ -279,7 +292,7 @@ end
 
     @testset "localindex" begin
         
-        for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)]
+        for iters in various_iters
 	        for np=1:5ntasks(iters),proc_id=1:np
 	        	ps = ProductSplit(iters,np,proc_id)
 	        	for (ind,val) in enumerate(ps)
@@ -294,7 +307,7 @@ end
     end
 
     @testset "procid_and_localindex" begin
-        for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)]
+        for iters in various_iters
 	        for np=1:ntasks(iters),proc_id=1:np
 	        	ps_col = collect(ProductSplit(iters,np,proc_id))
 	        	ps_col_rev = [reverse(t) for t in ps_col] 
@@ -315,7 +328,7 @@ end
 
     	@test ParallelUtilities.childindex((),1) == (1,)
 
-        for iters in [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6)]
+        for iters in various_iters
             for np=1:ntasks(iters),p=1:np
             	ps = ProductSplit(iters,np,p)
             	ps_col = collect(ps)
