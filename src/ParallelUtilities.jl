@@ -128,6 +128,8 @@ end
 @inline _last(::Tuple{}) = ()
 
 @inline Base.length(ps::ProductSplit) = ps.lastind - ps.firstind + 1
+
+@inline Base.firstindex(ps::ProductSplit) = 1
 @inline Base.lastindex(ps::ProductSplit) = ps.lastind - ps.firstind + 1
 
 @inline function childindex(ps::ProductSplit,ind::Int)

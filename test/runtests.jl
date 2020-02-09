@@ -82,11 +82,16 @@ end
     	@testset "first and last ind" begin
     	    iters = (1:10,)
     	    ps = ProductSplit(iters,2,1)
+    	    @test firstindex(ps) == 1
     	    @test ps.firstind == 1
     	    @test ps.lastind == div(length(iters[1]),2)
+    	    @test lastindex(ps) == div(length(iters[1]),2)
+    	    @test lastindex(ps) == length(ps)
     	    ps = ProductSplit(iters,2,2)
     	    @test ps.firstind == div(length(iters[1]),2) + 1
+    	    @test firstindex(ps) == 1
     	    @test ps.lastind == length(iters[1])
+    	    @test lastindex(ps) == length(ps)
 
     	    for np in length(iters[1])+1:length(iters[1])+10,
     	    	p in length(iters[1])+1:np
@@ -317,6 +322,7 @@ end
             	for i in 1:length(ps)
             		@test ps[i] == ps_col[i]
             	end
+            	@test ps[end] == ps[length(ps)]
             	@test_throws ParallelUtilities.BoundsErrorPS ps[0]
             	@test_throws ParallelUtilities.BoundsErrorPS ps[length(ps)+1]
             end
