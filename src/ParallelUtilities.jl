@@ -183,11 +183,11 @@ function Base.iterate(ps::ProductSplit{T},state=(first(ps),1)) where {T}
 	(el::T,next_state)
 end
 
-@inline Base.@propagate_inbounds function _firstlastalongdim(pss::ProductSplit{<:Any,N},dim::Int,
+@inline Base.@propagate_inbounds function _firstlastalongdim(ps::ProductSplit{<:Any,N},dim::Int,
 	firstindchild::Tuple=childindex(ps,ps.firstind),
 	lastindchild::Tuple=childindex(ps,ps.lastind)) where {N}
 
-	_firstlastalongdim(pss.iterators,dim,firstindchild,lastindchild)
+	_firstlastalongdim(ps.iterators,dim,firstindchild,lastindchild)
 end
 
 @inline Base.@propagate_inbounds function _firstlastalongdim(iterators::Tuple{Vararg{Any,N}},dim::Int,
