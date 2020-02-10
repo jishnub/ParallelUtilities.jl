@@ -168,17 +168,19 @@ end
 end
 @inline _getindex(::Tuple{},rest::Int...) = ()
 
-function Base.iterate(ps::ProductSplit,state=(first(ps),1))
+function Base.iterate(ps::ProductSplit{T},state=(first(ps),1)) where {T}
 	el,n = state
 
 	if n > length(ps)
 		return nothing
 	elseif n == length(ps)
 		# In this case the next value doesn't matter, so just return something arbitary
-		return (el,(first(ps),n+1))
+		next_state = (el::T,n+1)
+	else
+		next_state = (ps[n+1]::T,n+1)
 	end
 
-	(el,(ps[n+1],n+1))
+	(el::T,next_state)
 end
 
 @inline Base.@propagate_inbounds function _firstlastalongdim(pss::ProductSplit{<:Any,N},dim::Int,
