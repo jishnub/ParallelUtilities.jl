@@ -566,142 +566,287 @@ nprocs_node(procs_used::Vector{<:Integer} = workers()) = nprocs_node(gethostname
 # pmapsum and pmapreduce
 ############################################################################################
 
-# This function does not sort the values, so it might be faster
-function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tuple,args...;kwargs...)
+const RemoteChannelContainer{T} = NamedTuple{(:out, :err),Tuple{RemoteChannel{Channel{T}},RemoteChannel{Channel{Bool}}}}
 
+@inline Base.eltype(::RemoteChannelContainer{T}) where {T} = T
+
+function RemoteChannelContainer{T}(n::Int,p::Int) where {T}
+	out = RemoteChannel(()->Channel{T}(n),p)
+    err = RemoteChannel(()->Channel{Bool}(n),p)
+    RemoteChannelContainer{T}((out,err))
+end
+RemoteChannelContainer{T}(n::Int) where {T} = RemoteChannelContainer{T}(n,myid())
+RemoteChannelContainer(n::Int,p::Int) = RemoteChannelContainer{Any}(n,p)
+RemoteChannelContainer(n::Int) = RemoteChannelContainer{Any}(n,myid())
+
+struct BinaryTreeError <: Exception 
+	n :: Int
+end
+function Base.showerror(io::IO,err::BinaryTreeError)
+	print(io,"attempt to construct a binary tree with $(err.n) children")
+end
+
+# Each node has N children, where N can be 0,1 or 2
+struct BinaryTreeNode{N}
+	p :: Int
+	parent :: Int
+	children :: NTuple{N,Int}
+
+	function BinaryTreeNode(p::Int,p_parent::Int,p_children::NTuple{N,Int}) where {N}
+		(N <= 2) || throw(BinaryTreeError(N))
+		new{N}(p,p_parent,p_children)
+	end
+end
+
+@inline parentnoderank(i::Int) = max(div(i,2),1)
+
+@inline nchildren(::BinaryTreeNode{N}) where {N} = N
+
+function constructBinaryTree(procs::AbstractVector{Int})
+	N = length(procs)
+	h = floor(Int,log2(N)) # Number of levels of the tree
+	Ninternalnodes = 2^h - 1
+	Nleaf = N - Ninternalnodes
+	Nonechildinternalnodes = (Ninternalnodes > 0) ? rem(Nleaf,2) : 0
+	twochildendind = div(N-1,2)
+	onechildstartind = twochildendind + 1
+	onechildendind = onechildstartind + Nonechildinternalnodes - 1
+	tree = Vector{BinaryTreeNode}(undef,N)
+
+	for i=1:N
+		p = procs[i]
+		p_parent = procs[parentnoderank(i)]
+
+		if i <= twochildendind
+			# These nodes have two children each
+			p_children = (procs[2i],procs[2i+1])
+		elseif onechildstartind <= i <= onechildendind
+			# These nodes have one children each
+			p_children = (procs[2i],)
+		else
+			# These nodes have no children
+			p_children = ()
+		end
+		tree[i] = BinaryTreeNode(p,p_parent,p_children)
+	end
+	tree
+end
+
+struct BranchChannel{T,N}
+	p :: Int
+	selfchannels :: RemoteChannelContainer{T}
+	parentchannels :: RemoteChannelContainer{T}
+	childrenchannels :: RemoteChannelContainer{T}
+
+	function BranchChannel(p::Int,selfchannels::RemoteChannelContainer{T},
+		parentchannels::RemoteChannelContainer{T},
+		childrenchannels::RemoteChannelContainer{T},nchildren::Int) where {T}
+
+		(0 <= nchildren <= 2) || throw(BinaryTreeError(nchildren))
+	
+		new{T,nchildren}(p,selfchannels,parentchannels,childrenchannels)
+	end
+end
+@inline Base.eltype(::BranchChannel{T}) where {T} = T
+@inline nchildren(::BranchChannel{<:Any,N}) where {N} = N
+
+function BranchChannel(p::Int,parentchannels::RemoteChannelContainer{T},nchildren::Int) where {T}
+	(0 <= nchildren <= 2) || throw(BinaryTreeError(nchildren))
+	selfchannels = RemoteChannelContainer{T}(1,p)
+	childrenchannels = RemoteChannelContainer{T}(nchildren,p)
+	BranchChannel(p,selfchannels,parentchannels,childrenchannels,nchildren)
+end
+
+function BranchChannel{T,N}(p::Int) where {T,N}
+	(0 <= N <= 2) || throw(BinaryTreeError(N))
+	parentchannels = RemoteChannelContainer{T}(1,p)
+	BranchChannel(p,parentchannels,N)
+end
+BranchChannel{T,N}() where {T,N} = BranchChannel{T,N}(myid())
+
+function finalize_except_wherewhence(r::RemoteChannel)
+	if (myid() != r.where) && (myid() != r.whence)
+		finalize(r)
+	end
+end
+finalize_except_wherewhence(r::RemoteChannelContainer) = map(finalize_except_wherewhence,(r.out,r.err))
+
+function Base.finalize(r::RemoteChannelContainer)
+	finalize(r.out)
+	finalize(r.err)
+end
+
+function Base.finalize(bc::BranchChannel)
+	finalize(bc.selfchannels)
+	finalize(bc.childrenchannels)
+	finalize_except_wherewhence(bc.parentchannels)
+end
+
+function createbranchchannels(::Type{T},tree::Vector{BinaryTreeNode}) where {T}
+	branches = Vector{BranchChannel}(undef,length(tree))
+	isempty(tree) && return branches
+
+	# the first node has to be created separately as its children will be linked to it
+	firstnode = tree[1]
+	N = nchildren(firstnode)
+	p = firstnode.p
+	branches[1] = BranchChannel{T,N}(p)
+
+	for i=2:length(tree)
+		node = tree[i]
+		p = node.p
+		parentnodebranches = branches[parentnoderank(i)]
+		parentchannels = parentnodebranches.childrenchannels
+		branches[i] = BranchChannel(p,parentchannels,nchildren(node))
+	end
+
+	return branches
+end
+
+function createbranchchannels(::Type{T},iterators::Tuple) where {T}
 	procs_used = workersactive(iterators)
+	tree = constructBinaryTree(procs_used)
+	createbranchchannels(T,tree)
+end
+@inline createbranchchannels(iterators::Tuple) = createbranchchannels(Any,iterators)
 
-	num_workers_active = length(procs_used);
-	hostnames = gethostnames(procs_used);
-	nodes = nodenames(hostnames);
-	procid_rank1_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
-	Nnodes_reduction = length(procid_rank1_on_node)
+abstract type Ordering end
+struct Sorted <: Ordering end
+struct Unsorted <: Ordering end
 
-	nprocs_node_dict = nprocs_node(procs_used)
-	node_channels = Dict(
-		node=>(
-			out = RemoteChannel(()->Channel{Any}(nprocs_node_dict[node]),procid_node),
-			err = RemoteChannel(()->Channel{Bool}(nprocs_node_dict[node]),procid_node),
-			)
-			for (node,procid_node) in zip(nodes,procid_rank1_on_node))
+# Store the processor id with the value, necessary for sorting
+struct pval{T}
+	p :: Int
+	parent :: T
 
-	# Worker at which the final reduction takes place
-	p_final = first(procid_rank1_on_node)
+	function pval(p::Int,val::T) where {T}
+		new{T}(p,val)
+	end
+end
 
-	finalnode_reducechannel = RemoteChannel(()->Channel{Any}(length(procid_rank1_on_node)),p_final)
-	finalnode_errorchannel = RemoteChannel(()->Channel{Bool}(length(procid_rank1_on_node)),p_final)
+@inline pval(val::T) where {T} = pval(myid(),val)
 
-	result_channel = RemoteChannel(()->Channel{Any}(1))
-	error_channel = RemoteChannel(()->Channel{Bool}(1))
+# Function to obtain the value of pval types
+@inline value(p::pval) = p.parent
+@inline value(p::Any) = p
 
-	# Run the function on each processor and compute the reduction at each node
-	@sync for (rank,(p,node)) in enumerate(zip(procs_used,hostnames))
+############################################################################################
+# Map
+############################################################################################
+
+# Wrap a pval around the mapped value if sorting is necessary
+@inline function maybepvalput!(pipe::BranchChannel,val)
+	put!(pipe.selfchannels.out,val)
+end
+@inline function maybepvalput!(pipe::BranchChannel{<:pval},val)
+	put!(pipe.selfchannels.out,pval(val))
+end
+
+function mapTreeNode(fmap::Function,iterator,pipe::BranchChannel,args...;kwargs...)
+	# Evaluate the function
+	# Store the error flag locally
+	# If there are no errors then store the result locally
+	# No communication with other nodes happens here
+	try
+		res = fmap(iterator,args...;kwargs...)
+		maybepvalput!(pipe,res)
+		put!(pipe.selfchannels.err,false)
+	catch
+		put!(pipe.selfchannels.err,true)
+		rethrow()
+	end
+end
+
+############################################################################################
+# Reduction
+############################################################################################
+
+# Need to collect values at intermediate nodes to reduce over them
+# This function is only called if there is no error in the map locally, or on the children
+# No checks for errors is performed here
+function collectvalues(pipe::BranchChannel{T,N}) where {T,N}
+	vals = Vector{T}(undef,N+1)
+	@sync begin
+		@async vals[1] = take!(pipe.selfchannels.out)
 		@async begin
-			
-			eachnode_reducechannel = node_channels[node].out
-			eachnode_errorchannel = node_channels[node].err
-
-			p_parent = eachnode_reducechannel.where
-			
-			np_node = nprocs_node_dict[node]
-			
-			iterable_on_proc = evenlyscatterproduct(iterators,num_workers_active,rank)
-
-			@spawnat p begin
-				try
-					res = fmap(iterable_on_proc,args...;kwargs...)
-					put!(eachnode_reducechannel,res)
-					put!(eachnode_errorchannel,false)
-				catch e
-					put!(eachnode_errorchannel,true)
-					rethrow()
-				finally
-					# Don't need references to the intermediate reduction channels on other nodes
-					for (node_i,channels_i) in node_channels
-						if node_i == node
-							continue
-						end
-
-						finalize(channels_i.out)
-						finalize(channels_i.err)
-					end
-					if p != p_parent
-						finalize(eachnode_errorchannel)
-						finalize(eachnode_reducechannel)
-						finalize(finalnode_errorchannel)
-						finalize(finalnode_reducechannel)
-					end
-					if p != p_final
-						if p != result_channel.where
-							finalize(result_channel)
-						end
-						if p != error_channel.where
-							finalize(error_channel)
-						end
-					end
-				end
-			end
-
-			@async if p == p_parent
-				@spawnat p begin
-					try
-						anyerror = any(take!(eachnode_errorchannel) for i=1:np_node)
-						if !anyerror
-							res = freduce(take!(eachnode_reducechannel) for i=1:np_node)
-							put!(finalnode_reducechannel,res)
-							put!(finalnode_errorchannel,false)
-						else
-							put!(finalnode_errorchannel,true)
-						end
-					catch e
-						put!(finalnode_errorchannel,true)
-						rethrow()
-					finally
-						finalize(eachnode_errorchannel)
-						finalize(eachnode_reducechannel)
-
-						if p != p_final
-							finalize(finalnode_errorchannel)
-							finalize(finalnode_reducechannel)
-						end
-					end
-				end
-			end
-
-			@async if p == p_final
-				@spawnat p begin
-					try
-						anyerror = any(take!(finalnode_errorchannel) for i=1:Nnodes_reduction)
-						if !anyerror
-							res = freduce(take!(finalnode_reducechannel) for i=1:Nnodes_reduction)
-							put!(result_channel,res)
-							put!(error_channel,false)
-						else
-							put!(error_channel,true)
-						end
-					catch e
-						put!(error_channel,true)
-						rethrow()
-					finally
-						finalize(finalnode_errorchannel)
-						finalize(finalnode_reducechannel)
-
-						if p != result_channel.where
-							finalize(result_channel)
-						end
-						if p != error_channel.where
-							finalize(error_channel)
-						end
-					end
-				end
+			for i=2:N+1
+				vals[i] = take!(pipe.childrenchannels.out)
 			end
 		end
 	end
+	return vals
+end
 
-	anyerror = take!(error_channel)
-	if !anyerror
-		return take!(result_channel)
+# At leaves we don't need any reduction, just return the locally stored value obtained in the map
+@inline reducedvalueleaf(pipe::BranchChannel{<:Any,0}) = take!(pipe.selfchannels.out)
+
+# Two different methods to avoid ambiguity
+# This is a separate method for leaves to avoid an intermediate array allocation
+@inline reducedvalue(::Function,pipe::BranchChannel{<:Any,0},::Unsorted) = reducedvalueleaf(pipe)
+@inline reducedvalue(::Function,pipe::BranchChannel{<:Any,0},::Sorted) = reducedvalueleaf(pipe)
+
+# Reduction happens at the intermediate nodes
+function reducedvalue(freduce::Function,pipe::BranchChannel,::Unsorted)
+	vals = collectvalues(pipe)
+	freduce(vals)
+end
+
+function reducedvalue(freduce::Function,pipe::BranchChannel{<:pval},::Sorted)
+	vals = collectvalues(pipe)
+	sort!(vals,by=x->x.p)
+	pval(freduce(v.parent for v in vals))
+end
+
+function reduceTreeNode(freduce::Function,pipe::BranchChannel{T,N},ifsort::Ordering) where {T,N}
+	# This function that communicates with the parent and children
+
+	# Start by checking if there is any error locally in the map,
+	# and if there's none then check if there are any errors on the children
+	anyerr = take!(pipe.selfchannels.err) || any(take!(pipe.childrenchannels.err) for i=1:N)
+
+	# Evaluate the reduction only if there's no error
+	# In either case push the error flag to the parent
+	if !anyerr
+		try
+			res = reducedvalue(freduce,pipe,ifsort) :: T
+			put!(pipe.parentchannels.out,res)
+			put!(pipe.parentchannels.err,false)
+		catch e
+			put!(pipe.parentchannels.err,true)
+			rethrow()
+		end
+	else
+		put!(pipe.parentchannels.err,true)
 	end
+
+	finalize(pipe)
+end
+
+function return_unless_error(r::RemoteChannelContainer)
+	anyerror = take!(r.err)
+	if !anyerror
+		return value(take!(r.out))
+	end
+end
+
+# This function does not sort the values, so it might be faster
+function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tuple,args...;kwargs...)
+
+	branches = createbranchchannels(Any,iterators)
+	num_workers_active = nworkersactive(iterators)
+
+	# Run the function on each processor and compute the reduction at each node
+	@sync for (rank,mypipe) in enumerate(branches)
+		@async begin
+			p = mypipe.p
+			iterable_on_proc = evenlyscatterproduct(iterators,num_workers_active,rank)
+
+			@spawnat p mapTreeNode(fmap,iterable_on_proc,mypipe,args...;kwargs...)
+			@spawnat p reduceTreeNode(freduce,mypipe,Unsorted())
+		end
+	end
+
+	return_unless_error(first(branches).parentchannels)
 end
 
 function pmapreduce_commutative(fmap::Function,freduce::Function,
@@ -727,150 +872,23 @@ function pmapsum_elementwise(fmap::Function,iterable,args...;kwargs...)
 	pmapsum(plist->sum(asyncmap(x->fmap(x...,args...;kwargs...),plist)),iterable)
 end
 
-# Store the processor id with the value
-struct pval{T}
-	p :: Int
-	parent :: T
-end
+function pmapreduce(fmap::Function,freduce::Function,iterators::Tuple,args...;kwargs...)
 
-function pmapreduce(fmap::Function,freduce::Function,iterable::Tuple,args...;kwargs...)
-
-	procs_used = workersactive(iterable)
-
-	num_workers_active = length(procs_used);
-	hostnames = gethostnames(procs_used);
-	nodes = nodenames(hostnames);
-	procid_rank1_on_node = [procs_used[findfirst(isequal(node),hostnames)] for node in nodes];
-	Nnodes_reduction = length(procid_rank1_on_node)
-
-	nprocs_node_dict = nprocs_node(procs_used)
-	node_channels = Dict(
-		node=>(
-			out = RemoteChannel(()->Channel{pval}(nprocs_node_dict[node]),procid_node),
-			err = RemoteChannel(()->Channel{Bool}(nprocs_node_dict[node]),procid_node),
-			)
-			for (node,procid_node) in zip(nodes,procid_rank1_on_node))
-
-	# Worker at which the final reduction takes place
-	p_final = first(procid_rank1_on_node)
-
-	finalnode_reducechannel = RemoteChannel(()->Channel{pval}(Nnodes_reduction),p_final)
-	finalnode_errorchannel = RemoteChannel(()->Channel{Bool}(Nnodes_reduction),p_final)
-
-	result_channel = RemoteChannel(()->Channel{Any}(1))
-	error_channel = RemoteChannel(()->Channel{Bool}(1))
+	branches = createbranchchannels(pval,iterators)
+	num_workers_active = nworkersactive(iterators)
 
 	# Run the function on each processor and compute the reduction at each node
-	@sync for (rank,(p,node)) in enumerate(zip(procs_used,hostnames))
+	@sync for (rank,mypipe) in enumerate(branches)
 		@async begin
-			
-			eachnode_reducechannel = node_channels[node].out
-			eachnode_errorchannel = node_channels[node].err
+			p = mypipe.p
+			iterable_on_proc = evenlyscatterproduct(iterators,num_workers_active,rank)
 
-			p_parent = eachnode_reducechannel.where
-
-			np_node = nprocs_node_dict[node]
-			
-			iterable_on_proc = evenlyscatterproduct(iterable,num_workers_active,rank)
-			@spawnat p begin
-				try
-					res = pval(p,fmap(iterable_on_proc,args...;kwargs...))
-					put!(eachnode_reducechannel,res)
-					put!(eachnode_errorchannel,false)
-				catch e
-					put!(eachnode_errorchannel,true)
-					rethrow()
-				finally
-					# Don't need references to the intermediate reduction channels on other nodes
-					for (node_i,channels_i) in node_channels
-						if node_i == node
-							continue
-						end
-
-						finalize(channels_i.out)
-						finalize(channels_i.err)
-					end
-					if p != p_parent
-						finalize(eachnode_errorchannel)
-						finalize(eachnode_reducechannel)
-						finalize(finalnode_errorchannel)
-						finalize(finalnode_reducechannel)
-					end
-					if p != p_final
-						if p != result_channel.where
-							finalize(result_channel)
-						end
-						if p != error_channel.where
-							finalize(error_channel)
-						end
-					end
-				end
-			end
-
-			@async if p == p_parent
-				@spawnat p begin
-					try
-						anyerror = any(take!(eachnode_errorchannel) for i=1:np_node)
-						if !anyerror
-							vals = [take!(eachnode_reducechannel) for i=1:np_node]
-							sort!(vals,by=x->x.p)
-							res = pval(p,freduce(v.parent for v in vals))	
-							put!(finalnode_reducechannel,res)
-							put!(finalnode_errorchannel,false)
-						else
-							put!(finalnode_errorchannel,true)
-						end
-					catch e
-						put!(finalnode_errorchannel,true)
-						rethrow()
-					finally
-						finalize(eachnode_errorchannel)
-						finalize(eachnode_reducechannel)
-
-						if p != p_final
-							finalize(finalnode_errorchannel)
-							finalize(finalnode_reducechannel)
-						end
-					end
-				end
-			end
-
-			@async if p == p_final
-				@spawnat p begin
-					try
-						anyerror = any(take!(finalnode_errorchannel) for i=1:Nnodes_reduction)
-						if !anyerror
-							vals = [take!(finalnode_reducechannel) for i=1:Nnodes_reduction]
-							sort!(vals,by=x->x.p)
-							res = freduce(v.parent for v in vals)
-							put!(result_channel,res)
-							put!(error_channel,false)
-						else
-							put!(error_channel,true)
-						end
-					catch e
-						put!(error_channel,true)
-						rethrow()
-					finally
-						finalize(finalnode_errorchannel)
-						finalize(finalnode_reducechannel)
-
-						if p != result_channel.where
-							finalize(result_channel)
-						end
-						if p != error_channel.where
-							finalize(error_channel)
-						end
-					end
-				end
-			end
+			@spawnat p mapTreeNode(fmap,iterable_on_proc,mypipe,args...;kwargs...)
+			@spawnat p reduceTreeNode(freduce,mypipe,Sorted())
 		end
 	end
 
-	anyerror = take!(error_channel)
-	if !anyerror
-		return take!(result_channel)
-	end
+	return_unless_error(first(branches).parentchannels)
 end
 
 function pmapreduce(fmap::Function,freduce::Function,

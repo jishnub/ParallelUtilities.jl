@@ -89,7 +89,7 @@ julia> pmap(x->x^2,1:3)
 There is also a function `pmapbatch` that deals with batches of parameters that are passed to each processor, and `pmap_elementwise` calls this function under the hood to process the parameters one by one. We may use this directly as well if we need the entire batch for some reason (eg. reading values off a disk, which needs to be done once for the entire set and not for every parameter). As an example we demonstrate how to obtain the same result as above using `pmapbatch`:
 
 ```julia
-julia> p = pmapbatch(x->[f(i) for i in x],(xrange,yrange,zrange));
+julia> p = pmapbatch(x->[f(i...) for i in x],(xrange,yrange,zrange));
 
 julia> Tuple(p)
 (6, 7, 8, 7, 8, 9, 8, 9, 10, 7, 8, 9, 8, 9, 10, 9, 10, 11, 8, 9, 10, 9, 10, 11, 10, 11, 12, 9, 10, 11, 10, 11, 12, 11, 12, 13)
@@ -112,7 +112,7 @@ julia> pmapsum_elementwise(x->x^2,1:1000)
 333833500
 ```
 
-We may choose an arbitrary reduction operator in the function `pmapreduce` and `pmapreduce_commutative`, and the elementwise function `pmapreduce_commutative_elementwise`. The reductions are performed locally on each node before the results are subsequently collected and reduced on the calling host.
+We may choose an arbitrary reduction operator in the function `pmapreduce` and `pmapreduce_commutative`, and the elementwise function `pmapreduce_commutative_elementwise`. The reductions are carried out as a binary tree across all workers.
 
 ```julia
 # Compute 1^2 * 2^2 * 3^2 in parallel
@@ -135,7 +135,7 @@ julia> pmapreduce(x->ones(2).*myid(),x->hcat(x...),1:nworkers())
  2.0  3.0
 ```
 
-The functions `pmapreduce` produces the same result as `pmapreduce_commutative` if the reduction operator is commutative (ie. the order of results received from the children workers does not matter). The function `pmapreduce_commutative` might be faster as it avoids an intermediate collection and sorting. This is what is used by the function `pmapsum` that chooses the reduction operator to be a sum.
+The functions `pmapreduce` produces the same result as `pmapreduce_commutative` if the reduction operator is commutative (ie. the order of results received from the children workers does not matter). The function `pmapreduce_commutative` might be faster as it does not sort the results received from the workers before reduction. This is what is used by the function `pmapsum` that chooses the reduction operator to be a sum.
 
 ```julia
 julia> sum(workers())

@@ -7,6 +7,8 @@ addprocs(2)
 	using Pkg
     Pkg.activate(".")
     using ParallelUtilities
+    import ParallelUtilities: BinaryTreeNode, RemoteChannelContainer, BranchChannel, 
+	Sorted, Unsorted, Ordering, pval, value, reducedvalue, collectvalues, reduceTreeNode
 end
 
 @testset "ProductSplit" begin
@@ -422,11 +424,586 @@ end
     end
 end
 
+@testset "BinaryTree" begin
+    @testset "BinaryTreeNode" begin
+    	@testset "Constructor" begin
+	    	p = workers()[1]
+	    	b = BinaryTreeNode(p,p,())
+	        @test b isa BinaryTreeNode{0}
+	        @test ParallelUtilities.nchildren(b) == 0
+	        b = BinaryTreeNode(p,p,(2,))
+	        @test b isa BinaryTreeNode{1}
+	        @test ParallelUtilities.nchildren(b) == 1
+	        b = BinaryTreeNode(p,p,(2,3))
+	        @test b isa BinaryTreeNode{2}
+	        @test ParallelUtilities.nchildren(b) == 2
+
+	        @test_throws ParallelUtilities.BinaryTreeError BinaryTreeNode(p,p,(2,3,4))
+    	end
+    	
+    	@testset "constructBinaryTree" begin
+    		for imax = 1:10
+    			procs = collect(1:imax)
+    			tree = ParallelUtilities.constructBinaryTree(procs)
+    			@test length(tree) == length(procs)	
+    			@test tree[1].parent == 1
+    			for (rank,node) in enumerate(tree)
+    				@test node.p == procs[rank]
+    				@test node.parent == procs[ParallelUtilities.parentnoderank(rank)]
+    			end
+    		end
+
+    	    procs = [1]
+    	    tree = ParallelUtilities.constructBinaryTree(procs)
+    	    @test tree[1].children == ()
+
+    	    procs = collect(1:2)
+    	    tree = ParallelUtilities.constructBinaryTree(procs)
+    	    @test tree[1].children == (2,)
+    	    @test tree[2].children == ()
+
+    	    procs = collect(1:8)
+    	    tree = ParallelUtilities.constructBinaryTree(procs)
+    	    @test tree[1].children == (2,3)
+    	    @test tree[2].children == (4,5)
+    	    @test tree[3].children == (6,7)
+    	    @test tree[4].children == (8,)
+    	    @test tree[5].children == ()
+    	    @test tree[6].children == ()
+    	    @test tree[7].children == ()
+    	    @test tree[8].children == ()
+    	end
+    end
+    
+    @testset "RemoteChannelContainer" begin
+    	@testset "Constructor" begin
+    	    rc = ParallelUtilities.RemoteChannelContainer{Int}(1,myid())
+	        @test rc.out.where == myid()
+	        @test rc.err.where == myid()
+	        @test eltype(rc) == Int
+	        for p in workers()
+    	        rc = ParallelUtilities.RemoteChannelContainer{Int}(1,p)
+    	        @test rc.out.where == p
+    	        @test rc.err.where == p
+    	        @test eltype(rc) == Int
+    	    end
+
+	        rc = ParallelUtilities.RemoteChannelContainer{Int}(1)
+	        @test rc.out.where == myid()
+	        @test rc.err.where == myid()
+	        @test eltype(rc) == Int
+
+	        rc = ParallelUtilities.RemoteChannelContainer(1,myid())
+	        @test rc.out.where == myid()
+	        @test rc.err.where == myid()
+	        @test eltype(rc) == Any
+
+	        for p in workers()
+    	        rc = ParallelUtilities.RemoteChannelContainer(1,p)
+    	        @test rc.out.where == p
+    	        @test rc.err.where == p
+    	        @test eltype(rc) == Any
+    	    end
+
+	        rc = ParallelUtilities.RemoteChannelContainer(1)
+	        @test rc.out.where == myid()
+	        @test rc.err.where == myid()
+	        @test eltype(rc) == Any
+    	end
+
+        @testset "finalize" begin
+            rc = ParallelUtilities.RemoteChannelContainer{Int}(1)
+            finalize(rc)
+            @test rc.out.where == 0
+            @test rc.err.where == 0
+        end
+
+        @testset "finalize_except_wherewhence" begin
+            rc = ParallelUtilities.RemoteChannelContainer{Int}(1)
+            ParallelUtilities.finalize_except_wherewhence(rc)
+            @test rc.out.where == myid()
+            @test rc.err.where == myid()
+
+            @testset "rc on where" begin
+                # Create on this processor
+                rc = ParallelUtilities.RemoteChannelContainer{Int}(1)
+                for p in workers()
+                    rcoutw,rcerrw = @fetchfrom p begin 
+                        ParallelUtilities.finalize_except_wherewhence(rc)
+                        rc.out.where,rc.err.where
+                    end
+                    @test rc.out.where == myid()
+                    @test rc.err.where == myid()
+                    @test (rcoutw,rcerrw) == (0,0)
+                end
+            end
+
+            @testset "rc on remote" begin
+                # Create elsewhere
+                p_rc = workers()[1]
+                rc = ParallelUtilities.RemoteChannelContainer{Int}(1,p_rc)
+                for p in procs()
+                    rc_where = @fetchfrom p begin 
+                        ParallelUtilities.finalize_except_wherewhence(rc)
+                        (rc.out.where,rc.err.where)
+                    end
+                    if p != myid() && p != p_rc
+                        @test rc_where == (0,0)
+                    else
+                        @test rc_where == (p_rc,p_rc)
+                    end
+                end
+            end
+        end
+    end
+
+	@testset "BranchChannel" begin
+	    @testset "Constructor" begin
+	    	@testset "all channels supplied" begin
+    	        rc_self = RemoteChannelContainer{Int}(1)
+    	        rc_parent = RemoteChannelContainer{Int}(1)
+    	        rc_children = RemoteChannelContainer{Int}(1)
+    	        for n=0:2
+    	        	b = BranchChannel(1,rc_self,rc_parent,rc_children,n)
+    	        	@test b isa BranchChannel{Int,n}
+    	        	@test b.p == 1
+    	        	@test b.selfchannels == rc_self
+    	        	@test b.parentchannels == rc_parent
+    	        	@test b.childrenchannels == rc_children
+    	        	@test eltype(b) == Int
+                    @test ParallelUtilities.nchildren(b) == n
+    	        end
+    	        @test_throws ParallelUtilities.BinaryTreeError BranchChannel(1,rc_self,rc_parent,rc_children,3)
+	    	end
+
+	    	@testset "only parent channels supplied" begin
+	    		rc_parent = RemoteChannelContainer{Int}(1)
+	    		for n=0:2
+    	        	b = BranchChannel(1,rc_parent,n)
+    	        	@test b isa BranchChannel{Int,n}
+    	        	@test b.p == 1
+    	        	@test b.parentchannels == rc_parent
+    	        	@test b.selfchannels isa RemoteChannelContainer{Int}
+    	        	@test b.childrenchannels isa RemoteChannelContainer{Int}
+    	        	@test b.selfchannels.out.where == b.p
+    	        	@test b.selfchannels.err.where == b.p
+    	        	@test b.childrenchannels.out.where == b.p
+    	        	@test b.childrenchannels.err.where == b.p
+    	        	@test eltype(b) == Int
+                    @test ParallelUtilities.nchildren(b) == n
+    	        end
+	        	@test_throws ParallelUtilities.BinaryTreeError BranchChannel(1,rc_parent,3)
+	    	end
+
+	    	@testset "no channels supplied" begin
+	    		function testbranchchannel(b::BranchChannel{T,N},p) where {T,N}
+    	        	@test b.p == p
+    	        	@test b.parentchannels isa RemoteChannelContainer{T}
+    	        	@test b.selfchannels isa RemoteChannelContainer{T}
+    	        	@test b.childrenchannels isa RemoteChannelContainer{T}
+    	        	@test b.parentchannels.out.where == b.p
+    	        	@test b.parentchannels.err.where == b.p
+    	        	@test b.selfchannels.out.where == b.p
+    	        	@test b.selfchannels.err.where == b.p
+    	        	@test b.childrenchannels.out.where == b.p
+    	        	@test b.childrenchannels.err.where == b.p
+    	        	@test eltype(b) == T
+                    @test ParallelUtilities.nchildren(b) == N
+	    		end
+
+	    		p = workers()[1]
+	    	    for n=0:2
+    	        	b = BranchChannel{Int,n}(p)
+    	        	@test b isa BranchChannel{Int,n}
+    	        	testbranchchannel(b,p)
+
+    	        	b = BranchChannel{Int,n}()
+    	        	@test b isa BranchChannel{Int,n}
+    	        	testbranchchannel(b,myid())
+    	        end
+	        	@test_throws ParallelUtilities.BinaryTreeError BranchChannel{Int,3}(1)
+	        	@test_throws ParallelUtilities.BinaryTreeError BranchChannel{Int,3}()
+	    	end
+	    end
+
+	    @testset "finalize" begin
+	    	@testset "sameprocessor" begin
+    	        parentchannels = RemoteChannelContainer{Int}(1)
+    	        b = BranchChannel(1,parentchannels,1)
+    	        finalize(b)
+    	        @test b.selfchannels.out.where == 0
+    	        @test b.selfchannels.err.where == 0
+	        	@test b.childrenchannels.out.where == 0
+	        	@test b.childrenchannels.err.where == 0
+	        	@test b.parentchannels.out.where == myid()
+	        	@test b.parentchannels.err.where == myid()
+	    	end
+	    	@testset "elsewhere" begin
+	    		p = workers()[1]
+    	        selfchannels = RemoteChannelContainer{Int}(1,p)
+    	        childrenchannels = RemoteChannelContainer{Int}(1,p)
+	    		
+	    		@testset "parent == whence == where == myid()" begin
+	    	        parentchannels = RemoteChannelContainer{Int}(1)
+	    	        b = BranchChannel(1,selfchannels,parentchannels,childrenchannels,1)
+	    	        self_w,parent_w,child_w = @fetchfrom p begin
+	    	        	finalize(b)
+	    	        	(b.selfchannels.out.where,b.selfchannels.err.where),
+	    	        	(b.parentchannels.out.where,b.parentchannels.err.where),
+	    	        	(b.childrenchannels.out.where,b.childrenchannels.err.where)
+	    	    	end
+	    	    	@test self_w == (0,0)
+		        	@test child_w == (0,0)
+		        	@test parent_w == (0,0)
+	    		end
+
+	    		@testset "(parent == where) != (whence == myid())" begin
+		        	parentchannels = RemoteChannelContainer{Int}(1,p)
+	    	        b = BranchChannel(1,selfchannels,parentchannels,childrenchannels,1)
+	    	        self_w,parent_w,child_w = @fetchfrom p begin
+	    	        	finalize(b)
+	    	        	(b.selfchannels.out.where,b.selfchannels.err.where),
+	    	        	(b.parentchannels.out.where,b.parentchannels.err.where),
+	    	        	(b.childrenchannels.out.where,b.childrenchannels.err.where)
+	    	    	end
+	    	    	@test self_w == (0,0)
+		        	@test child_w == (0,0)
+		        	@test parent_w == (p,p)
+		        end
+	    	end
+	    end
+
+	    @testset "createbranchchannels" begin
+	        function testbranches(T,tree)
+    	        branches = ParallelUtilities.createbranchchannels(T,tree)
+    	        @test length(branches) == length(tree)
+    	        for (rank,branch) in enumerate(branches)
+    	        	parentrank = ParallelUtilities.parentnoderank(rank)
+    	        	p = branch.p
+    	        	p_parent = branches[parentrank].p
+    	        	@test branch.selfchannels.out.where == p
+    	        	@test branch.selfchannels.err.where == p
+    	        	@test branch.childrenchannels.out.where == p
+    	        	@test branch.childrenchannels.err.where == p
+    	        	@test branch.parentchannels.out.where == p_parent
+    	        	@test branch.parentchannels.err.where == p_parent
+    	        	@test eltype(branch) == T
+    	        	@test eltype(typeof(branch.parentchannels.out).parameters[1]) == T
+    	        	@test eltype(typeof(branch.parentchannels.err).parameters[1]) == Bool
+    	        	@test eltype(typeof(branch.selfchannels.out).parameters[1]) == T
+    	        	@test eltype(typeof(branch.selfchannels.err).parameters[1]) == Bool
+    	        	@test eltype(typeof(branch.childrenchannels.out).parameters[1]) == T
+    	        	@test eltype(typeof(branch.childrenchannels.err).parameters[1]) == Bool
+    	        end
+    	    end
+	        
+	        tree = ParallelUtilities.constructBinaryTree(workers())
+	        for T in [Int,Any,Bool,Vector{Float64},Array{ComplexF64,2}]
+	        	testbranches(T,tree)
+	        end
+
+	        iterators = (1:nworkers()+1,)
+	        branches = ParallelUtilities.createbranchchannels(iterators)
+	        @test eltype(first(branches)) == Any
+	        branches = ParallelUtilities.createbranchchannels(Int,iterators)
+	        @test eltype(first(branches)) == Int
+	    end
+	end
+end
+
 @testset "pmap and reduce" begin
 
 	exceptiontype = RemoteException
 	if VERSION >= v"1.3"
 		exceptiontype = CompositeException
+	end
+
+	@testset "Sorted and Unsorted" begin
+	    @test Sorted() isa Ordering
+	    @test Unsorted() isa Ordering
+	end
+
+	@testset "pval" begin
+		p = pval(1,3)
+		q = pval(3)
+	    @test p == q
+	    @test value(p) == 3
+	    @test value(3) == 3
+	    @test value(p) == value(q)
+	    @test value(p) == value(value(q))
+	end
+
+	@testset "mapTreeNode" begin
+
+		@testset "maybepvalput!" begin
+		    pipe = BranchChannel{Int,0}()
+		    ParallelUtilities.maybepvalput!(pipe,0)
+		    @test isready(pipe.selfchannels.out)
+		    @test take!(pipe.selfchannels.out) == 0
+
+		    pipe = BranchChannel{pval,0}()
+		    ParallelUtilities.maybepvalput!(pipe,0)
+		    @test isready(pipe.selfchannels.out)
+		    @test take!(pipe.selfchannels.out) == pval(myid(),0)
+		end
+
+		function test_on_pipe(fn,iterator,pipe,result_expected)
+			@test_throws ErrorException ParallelUtilities.mapTreeNode(x->error(""),iterator,pipe)
+			@test !isready(pipe.selfchannels.out) # should not have any result as there was an error
+			@test isready(pipe.selfchannels.err)
+			@test take!(pipe.selfchannels.err) # error flag should be true
+			@test !isready(pipe.selfchannels.err) # should not hold anything now
+			@test !isready(pipe.parentchannels.out)
+			@test !isready(pipe.parentchannels.err)
+			@test !isready(pipe.childrenchannels.out)
+			@test !isready(pipe.childrenchannels.err)
+
+			ParallelUtilities.mapTreeNode(fn,iterator,pipe)
+			@test isready(pipe.selfchannels.err)
+			@test !take!(pipe.selfchannels.err) # error flag should be false
+			@test !isready(pipe.selfchannels.err)
+			@test isready(pipe.selfchannels.out)
+			@test take!(pipe.selfchannels.out) == result_expected
+			@test !isready(pipe.selfchannels.out)
+			@test !isready(pipe.parentchannels.out)
+			@test !isready(pipe.parentchannels.err)
+			@test !isready(pipe.childrenchannels.out)
+			@test !isready(pipe.childrenchannels.err)
+		end
+
+		@testset "range" begin
+	 		iterator = 1:10
+			
+			pipe = BranchChannel{Int,0}()
+			test_on_pipe(sum,iterator,pipe,sum(iterator))
+		end
+		
+		@testset "ProductSplit" begin
+			iterators = (1:10,)
+			ps = ProductSplit(iterators,1,1)
+
+			pipe = BranchChannel{Int,0}()
+			test_on_pipe(x->sum(y[1] for y in x),ps,pipe,sum(iterators[1]))
+
+			pipe = BranchChannel{Int,1}()
+			test_on_pipe(x->sum(y[1] for y in x),ps,pipe,sum(iterators[1]))
+
+			pipe = BranchChannel{Int,2}()
+			test_on_pipe(x->sum(y[1] for y in x),ps,pipe,sum(iterators[1]))
+		end
+	end
+
+	@testset "reduce" begin
+
+		# Leaves just push results to the parent
+		# reduced value at a leaf is simply whatever is stored in the local output channel
+		@testset "at a leaf" begin
+			iterator = 1:10
+			result = sum(iterator)
+			pipe = BranchChannel{Int,0}()
+
+			# These do not check for errors
+		    @testset "reducedvalueleaf" begin
+		        put!(pipe.selfchannels.out,result)
+		        @test ParallelUtilities.reducedvalueleaf(pipe) == result
+		    end
+		    @testset "reducedvalue" begin
+		       put!(pipe.selfchannels.out,result)
+		       @test ParallelUtilities.reducedvalue(x->nothing,pipe,Sorted()) == result
+		       put!(pipe.selfchannels.out,result)
+		       @test ParallelUtilities.reducedvalue(x->nothing,pipe,Unsorted()) == result
+		    end
+		end
+
+		# Values are collected at the intermediate nodes
+		@testset "at parent nodes" begin
+
+			# Put some known values on the self and children channels
+			function putselfchildren!(pipe::BranchChannel{<:Any,N},::Unsorted) where {N}
+		    	put!(pipe.selfchannels.out,0)
+		    	put!(pipe.selfchannels.err,false)
+		    	for i=1:N
+		    		put!(pipe.childrenchannels.out,i)
+		    		put!(pipe.childrenchannels.err,false)
+		    	end
+		    end
+		    function putselfchildren!(pipe::BranchChannel{<:pval,N},::Sorted) where {N}
+		    	put!(pipe.selfchannels.out,pval(0,0))
+		    	put!(pipe.selfchannels.err,false)
+		    	for i=1:N
+		    		put!(pipe.childrenchannels.out,pval(i,i))
+		    		put!(pipe.childrenchannels.err,false)
+		    	end
+		    end
+
+		    function clearerrors!(pipe::BranchChannel{<:Any,N}) where {N}
+		    	take!(pipe.selfchannels.err)
+		    	for i=1:N
+		    		take!(pipe.childrenchannels.err)
+		    	end
+		    end
+
+			@testset "collectvalues" begin
+			    function testpipecollect(pipe::BranchChannel{<:Any,N},ifsorted::Ordering) where {N}
+			    	p = pipe.p
+
+			    	# In this case we know the ordering as we are pushing 
+			    	# the results in on the same processor
+			    	res_exp = collect(0:N)
+
+			    	try
+				    	putselfchildren!(pipe,ifsorted)
+						@test value.(collectvalues(pipe)) == res_exp
+						clearerrors!(pipe)
+				    	
+				  		@fetchfrom p putselfchildren!(pipe,ifsorted)
+						@test value.(@fetchfrom p collectvalues(pipe)) == res_exp
+						clearerrors!(pipe)
+						
+						@fetchfrom p putselfchildren!(pipe,ifsorted)
+						@test value.(collectvalues(pipe)) == res_exp
+						clearerrors!(pipe)
+						
+						putselfchildren!(pipe,ifsorted)
+						@test value.(@fetchfrom p collectvalues(pipe)) == res_exp
+						clearerrors!(pipe)
+					catch
+						rethrow()
+					end
+				end
+				
+				for nchildren = 0:2
+					@testset "local pipe" begin
+						@testset "unsorted" begin
+							pipe = BranchChannel{Int,nchildren}()
+							testpipecollect(pipe,Unsorted())
+						end
+						@testset "sorted" begin
+							pipe = BranchChannel{pval,nchildren}()
+							testpipecollect(pipe,Sorted())
+						end
+					end
+
+					# This isn't really necessary
+					@testset "remote pipe" begin
+						p = workers()[1]
+						@testset "unsorted" begin
+							pipe = BranchChannel{Int,nchildren}(p)
+							testpipecollect(pipe,Unsorted())
+						end
+						@testset "sorted" begin
+							pipe = BranchChannel{pval,nchildren}(p)
+							testpipecollect(pipe,Sorted())
+						end
+					end
+				end
+			end
+
+			@testset "reducedvalue" begin
+
+				function testreduction(freduce::Function,pipe::BranchChannel{<:Any,N},
+		    		ifsorted::Ordering,res_exp) where {N}
+
+			    	p = pipe.p
+
+			    	try
+				    	putselfchildren!(pipe,ifsorted)
+						@test value(reducedvalue(freduce,pipe,ifsorted)) == res_exp
+						clearerrors!(pipe)
+				    	
+				  		@fetchfrom p putselfchildren!(pipe,ifsorted)
+						@test value(@fetchfrom p reducedvalue(freduce,pipe,ifsorted)) == res_exp
+						clearerrors!(pipe)
+						
+						@fetchfrom p putselfchildren!(pipe,ifsorted)
+						@test value(reducedvalue(freduce,pipe,ifsorted)) == res_exp
+						clearerrors!(pipe)
+						
+						putselfchildren!(pipe,ifsorted)
+						@test value(@fetchfrom p reducedvalue(freduce,pipe,ifsorted)) == res_exp
+						clearerrors!(pipe)
+					catch
+						rethrow()
+					end
+				end
+
+			    for nchildren = 1:2
+			    	@testset "Unsorted" begin
+			            pipe = BranchChannel{Int,nchildren}()
+			            res_exp = sum(0:nchildren)
+			            testreduction(sum,pipe,Unsorted(),res_exp)
+			        end
+			    	@testset "Sorted" begin
+			            pipe = BranchChannel{pval,nchildren}()
+			            res_exp = collect(0:nchildren)
+			            testreduction(x->vcat(x...),pipe,Sorted(),res_exp)
+			    
+			            pipe = BranchChannel{pval,nchildren}()
+			            res_exp = sum(0:nchildren)
+			            testreduction(sum,pipe,Sorted(),res_exp)
+			    	end
+			    end
+			end
+
+			@testset "reduceTreeNode" begin
+
+		    	function testreduction(freduce::Function,pipe::BranchChannel{<:Any,N},
+			    		ifsorted::Ordering,res_exp) where {N}
+
+		    		@test !isready(pipe.parentchannels.out)
+		    		@test !isready(pipe.parentchannels.err)
+
+		    		try
+			    		wait(@spawnat pipe.p putselfchildren!(pipe,ifsorted))
+			    		reduceTreeNode(freduce,pipe,ifsorted)
+			    	catch
+			    		rethrow()
+			    	end
+					@test isready(pipe.parentchannels.out)
+					@test isready(pipe.parentchannels.err)
+					@test !take!(pipe.parentchannels.err) # there should be no error
+					@test value(take!(pipe.parentchannels.out)) == res_exp
+
+					# The pipe should be finalized at this point
+					@test pipe.selfchannels.out.where == 0
+					@test pipe.selfchannels.err.where == 0
+					@test pipe.childrenchannels.out.where == 0
+					@test pipe.childrenchannels.err.where == 0
+		    	end
+
+		    	for nchildren = 1:2
+			    	@testset "Unsorted" begin
+			            pipe = BranchChannel{Int,nchildren}()
+			            res_exp = sum(0:nchildren)
+			            testreduction(sum,pipe,Unsorted(),res_exp)
+
+			            rc_parent = RemoteChannelContainer{Int}(1)
+			            p = workers()[1]
+			            pipe = BranchChannel(p,rc_parent,nchildren)
+			            testreduction(sum,pipe,Unsorted(),res_exp)
+			        end
+			    	@testset "Sorted" begin
+			            pipe = BranchChannel{pval,nchildren}()
+			            res_exp = collect(0:nchildren)
+			            testreduction(x->vcat(x...),pipe,Sorted(),res_exp)
+
+			            rc_parent = RemoteChannelContainer{pval}(1)
+			            p = workers()[1]
+			            pipe = BranchChannel(p,rc_parent,nchildren)
+			            testreduction(x->vcat(x...),pipe,Sorted(),res_exp)
+			    
+			            pipe = BranchChannel{pval,nchildren}()
+			            res_exp = sum(0:nchildren)
+			            testreduction(sum,pipe,Sorted(),res_exp)
+
+			            rc_parent = RemoteChannelContainer{pval}(1)
+			            p = workers()[1]
+			            pipe = BranchChannel(p,rc_parent,nchildren)
+			            testreduction(sum,pipe,Sorted(),res_exp)
+			    	end
+			    end
+		    end
+		end
 	end
 
 	@testset "pmapbatch" begin
