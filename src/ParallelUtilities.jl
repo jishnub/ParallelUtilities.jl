@@ -7,7 +7,6 @@ export  ProductSplit,
 	evenlyscatterproduct,
 	ntasks,
 	whichproc,
-	whichproc,
 	procrange_recast,
 	localindex,
 	procid_and_localindex,
@@ -587,20 +586,20 @@ function Base.showerror(io::IO,err::BinaryTreeError)
 end
 
 # Each node has N children, where N can be 0,1 or 2
-struct BinaryTreeNode{N}
+struct BinaryTreeNode
 	p :: Int
 	parent :: Int
-	children :: NTuple{N,Int}
+	nchildren :: Int
 
-	function BinaryTreeNode(p::Int,p_parent::Int,p_children::NTuple{N,Int}) where {N}
-		(N <= 2) || throw(BinaryTreeError(N))
-		new{N}(p,p_parent,p_children)
+	function BinaryTreeNode(p::Int,p_parent::Int,N::Int)
+		(0 <= N <= 2) || throw(BinaryTreeError(N))
+		new(p,p_parent,N)
 	end
 end
 
 @inline parentnoderank(i::Int) = max(div(i,2),1)
 
-@inline nchildren(::BinaryTreeNode{N}) where {N} = N
+@inline nchildren(b::BinaryTreeNode) = b.nchildren
 
 struct BinaryTree{T}
 	N :: Int # total number of nodes
@@ -627,9 +626,6 @@ struct BinaryTree{T}
 end
 
 Base.length(b::BinaryTree) = b.N
-# This method is not used as empty binary trees are not allowed
-# It will be removed in the next minor release
-Base.isempty(b::BinaryTree) = length(b) == 0
 
 function Base.getindex(tree::BinaryTree,i::Int)
 	procs = tree.procs
@@ -639,82 +635,51 @@ function Base.getindex(tree::BinaryTree,i::Int)
 	
 	if i <= tree.twochildendind
 		# These nodes have two children each
-		p_children = (procs[2i],procs[2i+1])
-
+		nchildren = 2
 	elseif i <= tree.onechildendind
 		# These nodes have one child each
-		p_children = (procs[2i],)
-
+		nchildren = 1
 	else
 		# These nodes have no children
-		p_children = ()
+		nchildren = 0
 	end
 
-	BinaryTreeNode(p,p_parent,p_children)
+	BinaryTreeNode(p,p_parent,nchildren)
 end
 
-# This function is not used and will be removed in the next minor release
-function constructBinaryTree(procs::AbstractVector{Int})
-	N = length(procs)
-	h = floor(Int,log2(N)) # Number of levels of the tree
-	Ninternalnodes = 2^h - 1
-	Nleaf = N - Ninternalnodes
-	Nonechildinternalnodes = (Ninternalnodes > 0) ? rem(Nleaf,2) : 0
-	twochildendind = div(N-1,2)
-	onechildstartind = twochildendind + 1
-	onechildendind = onechildstartind + Nonechildinternalnodes - 1
-	tree = Vector{BinaryTreeNode}(undef,N)
-
-	for i=1:N
-		p = procs[i]
-		p_parent = procs[parentnoderank(i)]
-
-		if i <= twochildendind
-			# These nodes have two children each
-			p_children = (procs[2i],procs[2i+1])
-		elseif onechildstartind <= i <= onechildendind
-			# These nodes have one child each
-			p_children = (procs[2i],)
-		else
-			# These nodes have no children
-			p_children = ()
-		end
-		tree[i] = BinaryTreeNode(p,p_parent,p_children)
-	end
-	tree
-end
-
-struct BranchChannel{T,N}
+struct BranchChannel{Tmap,Tred}
 	p :: Int
-	selfchannels :: RemoteChannelContainer{T}
-	parentchannels :: RemoteChannelContainer{T}
-	childrenchannels :: RemoteChannelContainer{T}
+	selfchannels :: RemoteChannelContainer{Tmap}
+	parentchannels :: RemoteChannelContainer{Tred}
+	childrenchannels :: RemoteChannelContainer{Tred}
+	nchildren :: Int
 
-	function BranchChannel(p::Int,selfchannels::RemoteChannelContainer{T},
-		parentchannels::RemoteChannelContainer{T},
-		childrenchannels::RemoteChannelContainer{T},nchildren::Int) where {T}
+	function BranchChannel(p::Int,selfchannels::RemoteChannelContainer{Tmap},
+		parentchannels::RemoteChannelContainer{Tred},
+		childrenchannels::RemoteChannelContainer{Tred},nchildren::Int) where {Tmap,Tred}
 
 		(0 <= nchildren <= 2) || throw(BinaryTreeError(nchildren))
 	
-		new{T,nchildren}(p,selfchannels,parentchannels,childrenchannels)
+		new{Tmap,Tred}(p,selfchannels,parentchannels,childrenchannels,nchildren)
 	end
 end
-@inline Base.eltype(::BranchChannel{T}) where {T} = T
-@inline nchildren(::BranchChannel{<:Any,N}) where {N} = N
+@inline nchildren(b::BranchChannel) = b.nchildren
 
-function BranchChannel(p::Int,parentchannels::RemoteChannelContainer{T},nchildren::Int) where {T}
+function BranchChannel(p::Int,::Type{Tmap},
+	parentchannels::RemoteChannelContainer{Tred},nchildren::Int) where {Tmap,Tred}
+
 	(0 <= nchildren <= 2) || throw(BinaryTreeError(nchildren))
-	selfchannels = RemoteChannelContainer{T}(1,p)
-	childrenchannels = RemoteChannelContainer{T}(nchildren,p)
+	selfchannels = RemoteChannelContainer{Tmap}(1,p)
+	childrenchannels = RemoteChannelContainer{Tred}(nchildren,p)
 	BranchChannel(p,selfchannels,parentchannels,childrenchannels,nchildren)
 end
 
-function BranchChannel{T,N}(p::Int) where {T,N}
-	(0 <= N <= 2) || throw(BinaryTreeError(N))
-	parentchannels = RemoteChannelContainer{T}(1,p)
-	BranchChannel(p,parentchannels,N)
+function BranchChannel{Tmap,Tred}(p::Int,nchildren::Int) where {Tmap,Tred}
+	(0 <= nchildren <= 2) || throw(BinaryTreeError(nchildren))
+	parentchannels = RemoteChannelContainer{Tred}(1,p)
+	BranchChannel(p,Tmap,parentchannels,nchildren)
 end
-BranchChannel{T,N}() where {T,N} = BranchChannel{T,N}(myid())
+BranchChannel{Tmap,Tred}(nchildren::Int) where {Tmap,Tred} = BranchChannel{Tmap,Tred}(myid(),nchildren)
 
 function finalize_except_wherewhence(r::RemoteChannel)
 	if (myid() != r.where) && (myid() != r.whence)
@@ -734,31 +699,31 @@ function Base.finalize(bc::BranchChannel)
 	finalize_except_wherewhence(bc.parentchannels)
 end
 
-function createbranchchannels(::Type{T},tree::Union{Vector{BinaryTreeNode},BinaryTree}) where {T}
-	branches = Vector{BranchChannel}(undef,length(tree))
-	isempty(tree) && return branches
+function createbranchchannels(::Type{Tmap},::Type{Tred},tree::BinaryTree) where {Tmap,Tred}
+	branches = Vector{BranchChannel{Tmap,Tred}}(undef,length(tree))
+
 	# the first node has to be created separately as its children will be linked to it
 	firstnode = tree[1]
 	N = nchildren(firstnode)
 	p = firstnode.p
-	branches[1] = BranchChannel{T,N}(p)
+	branches[1] = BranchChannel{Tmap,Tred}(p,N)
 
 	for i=2:length(tree)
 		node = tree[i]
 		p = node.p
 		parentnodebranches = branches[parentnoderank(i)]
 		parentchannels = parentnodebranches.childrenchannels
-		branches[i] = BranchChannel(p,parentchannels,nchildren(node))
+		branches[i] = BranchChannel(p,Tmap,parentchannels,nchildren(node))
 	end
 
 	return branches
 end
 
-function createbranchchannels(::Type{T},iterators::Tuple) where {T}
+function createbranchchannels(::Type{Tmap},::Type{Tred},iterators::Tuple) where {Tmap,Tred}
 	tree = BinaryTree(workersactive(iterators))
-	createbranchchannels(T,tree)
+	createbranchchannels(Tmap,Tred,tree)
 end
-@inline createbranchchannels(iterators::Tuple) = createbranchchannels(Any,iterators)
+@inline createbranchchannels(iterators::Tuple) = createbranchchannels(Any,Any,iterators)
 
 abstract type Ordering end
 struct Sorted <: Ordering end
@@ -780,6 +745,9 @@ end
 @inline value(p::pval) = p.parent
 @inline value(p::Any) = p
 
+@inline Base.convert(::Type{pval{T}},x) where {T} = pval(T(value(x)))
+@inline Base.convert(::Type{pval{T}},x::pval{T}) where {T} = x
+
 ############################################################################################
 # Map
 ############################################################################################
@@ -789,7 +757,7 @@ end
 	put!(pipe.selfchannels.out,val)
 end
 @inline function maybepvalput!(pipe::BranchChannel{<:pval},val)
-	put!(pipe.selfchannels.out,pval(val))
+	put!(pipe.selfchannels.out,pval(value(val)))
 end
 
 function mapTreeNode(fmap::Function,iterator,pipe::BranchChannel,args...;kwargs...)
@@ -811,54 +779,50 @@ end
 # Reduction
 ############################################################################################
 
-# Need to collect values at intermediate nodes to reduce over them
-# This function is only called if there is no error in the map locally, or on the children
-# No checks for errors is performed here
-function collectvalues(pipe::BranchChannel{T,N}) where {T,N}
-	vals = Vector{T}(undef,N+1)
+function reducedvalue(freduce::Function,pipe::BranchChannel{Tmap,Tred},::Unsorted) where {Tmap,Tred}
+	self = take!(pipe.selfchannels.out) :: Tmap
+
+	N = nchildren(pipe)
+	res = if N > 0
+			reducechildren = freduce(take!(pipe.childrenchannels.out)::Tred for i=1:N)::Tred
+			freduce((reducechildren,self)) :: Tred
+		else
+			freduce((self,)) :: Tred
+		end
+end
+
+function reducedvalue(freduce::Function,pipe::BranchChannel{Tmap,Tred},::Sorted) where {Tmap,Tred}
+	N = nchildren(pipe)
+
+	vals = Vector{Tred}(undef,N+1)
 	@sync begin
-		@async vals[1] = take!(pipe.selfchannels.out)
 		@async begin
-			for i=2:N+1
-				vals[i] = take!(pipe.childrenchannels.out)
-			end
+			selfval = take!(pipe.selfchannels.out)::Tmap
+			selfvalred = freduce((value(selfval),))
+			vals[1] = pval(selfvalred)
+		end
+		@async for i=2:N+1
+			vals[i] = take!(pipe.childrenchannels.out) :: Tred
 		end
 	end
-	return vals
-end
 
-# At leaves we don't need any reduction, just return the locally stored value obtained in the map
-@inline reducedvalueleaf(pipe::BranchChannel{<:Any,0}) = take!(pipe.selfchannels.out)
-
-# Two different methods to avoid ambiguity
-# This is a separate method for leaves to avoid an intermediate array allocation
-@inline reducedvalue(::Function,pipe::BranchChannel{<:Any,0},::Unsorted) = reducedvalueleaf(pipe)
-@inline reducedvalue(::Function,pipe::BranchChannel{<:Any,0},::Sorted) = reducedvalueleaf(pipe)
-
-# Reduction happens at the intermediate nodes
-function reducedvalue(freduce::Function,pipe::BranchChannel,::Unsorted)
-	vals = collectvalues(pipe)
-	freduce(vals)
-end
-
-function reducedvalue(freduce::Function,pipe::BranchChannel{<:pval},::Sorted)
-	vals = collectvalues(pipe)
 	sort!(vals,by=x->x.p)
-	pval(freduce(v.parent for v in vals))
+	pval(freduce(value(v) for v in vals))
 end
 
-function reduceTreeNode(freduce::Function,pipe::BranchChannel{T,N},ifsort::Ordering) where {T,N}
+function reduceTreeNode(freduce::Function,pipe::BranchChannel{Tmap,Tred},ifsort::Ordering) where {Tmap,Tred}
 	# This function that communicates with the parent and children
 
 	# Start by checking if there is any error locally in the map,
 	# and if there's none then check if there are any errors on the children
-	anyerr = take!(pipe.selfchannels.err) || any(take!(pipe.childrenchannels.err) for i=1:N)
+	anyerr = take!(pipe.selfchannels.err) || 
+				any(take!(pipe.childrenchannels.err) for i=1:nchildren(pipe))
 
 	# Evaluate the reduction only if there's no error
 	# In either case push the error flag to the parent
 	if !anyerr
 		try
-			res = reducedvalue(freduce,pipe,ifsort) :: T
+			res = reducedvalue(freduce,pipe,ifsort) :: Tred
 			put!(pipe.parentchannels.out,res)
 			put!(pipe.parentchannels.err,false)
 		catch e
@@ -881,10 +845,9 @@ end
 
 @inline return_unless_error(b::BranchChannel) = return_unless_error(b.parentchannels)
 
-# This function does not sort the values, so it might be faster
-function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tuple,args...;kwargs...)
+function pmapreduceworkers(fmap::Function,freduce::Function,iterators::Tuple,
+	branches,ord::Ordering,args...;kwargs...)
 
-	branches = createbranchchannels(Any,iterators)
 	num_workers_active = nworkersactive(iterators)
 
 	# Run the function on each processor and compute the reduction at each node
@@ -894,11 +857,41 @@ function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tupl
 			iterable_on_proc = evenlyscatterproduct(iterators,num_workers_active,rank)
 
 			@spawnat p mapTreeNode(fmap,iterable_on_proc,mypipe,args...;kwargs...)
-			@spawnat p reduceTreeNode(freduce,mypipe,Unsorted())
+			@spawnat p reduceTreeNode(freduce,mypipe,ord)
 		end
 	end
 
 	return_unless_error(first(branches))
+end
+
+function infer_returntypes(fmap,freduce,iterators::Tuple)
+	firstset = map(first,iterators); T = typeof(firstset)
+	Tmap = first(Base.return_types(fmap,(T,)))
+	Tred = first(Base.return_types(freduce,(Tuple{Tmap},)))
+	Tmap,Tred
+end
+
+infer_returntypes(fmap,freduce,iterable) = infer_returntypes(fmap,freduce,(iterable,))
+infer_returntypes(fmap,freduce,itp::Iterators.ProductIterator) = 
+	infer_returntypes(fmap,freduce,itp.iterators)
+
+# This function does not sort the values, so it might be faster
+function pmapreduce_commutative(fmap::Function,::Type{Tmap},
+	freduce::Function,::Type{Tred},iterators::Tuple,args...;kwargs...) where {Tmap,Tred}
+
+	branches = createbranchchannels(Tmap,Tred,iterators)
+	pmapreduceworkers(fmap,freduce,iterators,branches,Unsorted(),args...;kwargs...)
+end
+
+function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tuple,args...;kwargs...)
+	Tmap,Tred = infer_returntypes(fmap,freduce,iterators)
+	pmapreduce_commutative(fmap,Tmap,freduce,Tred,iterators,args...;kwargs...)
+end
+
+function pmapreduce_commutative(fmap::Function,::Type{Tmap},freduce::Function,
+	::Type{Tred},itp::Iterators.ProductIterator,args...;kwargs...) where {Tmap,Tred}
+
+	pmapreduce_commutative(fmap,Tmap,freduce,Tred,itp.iterators,args...;kwargs...)
 end
 
 function pmapreduce_commutative(fmap::Function,freduce::Function,
@@ -907,8 +900,20 @@ function pmapreduce_commutative(fmap::Function,freduce::Function,
 	pmapreduce_commutative(fmap,freduce,itp.iterators,args...;kwargs...)
 end
 
+function pmapreduce_commutative(fmap::Function,::Type{Tmap},freduce::Function,::Type{Tred},
+	iterable,args...;kwargs...) where {Tmap,Tred}
+	pmapreduce_commutative(fmap,Tmap,freduce,Tred,(iterable,),args...;kwargs...)
+end
+
 function pmapreduce_commutative(fmap::Function,freduce::Function,iterable,args...;kwargs...)
 	pmapreduce_commutative(fmap,freduce,(iterable,),args...;kwargs...)
+end
+
+function pmapreduce_commutative_elementwise(fmap::Function,::Type{Tmap},
+	freduce::Function,::Type{Tred},iterable,args...;kwargs...) where {Tmap,Tred}
+	
+	pmapreduce_commutative(plist->freduce(asyncmap(x->fmap(x...,args...;kwargs...),plist)),
+		Tred,freduce,Tred,iterable,args...;kwargs...)
 end
 
 function pmapreduce_commutative_elementwise(fmap::Function,freduce::Function,iterable,args...;kwargs...)
@@ -916,36 +921,50 @@ function pmapreduce_commutative_elementwise(fmap::Function,freduce::Function,ite
 		freduce,iterable,args...;kwargs...)
 end
 
+function pmapsum(fmap::Function,::Type{T},iterable,args...;kwargs...) where {T}
+	pmapreduce_commutative(fmap,T,sum,T,iterable,args...;kwargs...)
+end
+
 function pmapsum(fmap::Function,iterable,args...;kwargs...)
 	pmapreduce_commutative(fmap,sum,iterable,args...;kwargs...)
+end
+
+function pmapsum_elementwise(fmap::Function,::Type{T},iterable,args...;kwargs...) where {T}
+	pmapsum(plist->sum(asyncmap(x->fmap(x...,args...;kwargs...),plist)),T,iterable)
 end
 
 function pmapsum_elementwise(fmap::Function,iterable,args...;kwargs...)
 	pmapsum(plist->sum(asyncmap(x->fmap(x...,args...;kwargs...),plist)),iterable)
 end
 
+function pmapreduce(fmap::Function,::Type{Tmap},freduce::Function,::Type{Tred},
+	iterators::Tuple,args...;kwargs...) where {Tmap,Tred}
+
+	branches = createbranchchannels(pval{Tmap},pval{Tred},iterators)
+	pmapreduceworkers(fmap,freduce,iterators,branches,Sorted(),args...;kwargs...)
+end
+
 function pmapreduce(fmap::Function,freduce::Function,iterators::Tuple,args...;kwargs...)
+	Tmap,Tred = infer_returntypes(fmap,freduce,iterators)
+	pmapreduce(fmap,Tmap,freduce,Tred,iterators,args...;kwargs...)
+end
 
-	branches = createbranchchannels(pval,iterators)
-	num_workers_active = nworkersactive(iterators)
+function pmapreduce(fmap::Function,::Type{Tmap},freduce::Function,::Type{Tred},
+	itp::Iterators.ProductIterator,args...;kwargs...) where {Tmap,Tred}
 
-	# Run the function on each processor and compute the reduction at each node
-	@sync for (rank,mypipe) in enumerate(branches)
-		@async begin
-			p = mypipe.p
-			iterable_on_proc = evenlyscatterproduct(iterators,num_workers_active,rank)
-
-			@spawnat p mapTreeNode(fmap,iterable_on_proc,mypipe,args...;kwargs...)
-			@spawnat p reduceTreeNode(freduce,mypipe,Sorted())
-		end
-	end
-
-	return_unless_error(first(branches))
+	pmapreduce(fmap,Tmap,freduce,Tred,itp.iterators,args...;kwargs...)
 end
 
 function pmapreduce(fmap::Function,freduce::Function,
 	itp::Iterators.ProductIterator,args...;kwargs...)
+
 	pmapreduce(fmap,freduce,itp.iterators,args...;kwargs...)
+end
+
+function pmapreduce(fmap::Function,::Type{Tmap},freduce::Function,::Type{Tred},
+	iterable,args...;kwargs...) where {Tmap,Tred}
+	
+	pmapreduce(fmap,Tmap,freduce,Tred,(iterable,),args...;kwargs...)
 end
 
 function pmapreduce(fmap::Function,freduce::Function,iterable,args...;kwargs...)

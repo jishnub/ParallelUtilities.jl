@@ -15,6 +15,56 @@ pkg> add ParallelUtilities
 julia> using ParallelUtilities 
 ```
 
+# Exported functions
+
+* `pmap`-related functions
+  * `pmapreduce`
+  * `pmapreduce_commutative`
+  * `pmapsum`
+  * `pmapreduce_elementwise`
+  * `pmapsum_elementwise`
+* Functions to evenly split a Tuple of ranges
+  * `evenlyscatterproduct`
+  * `nworkersactive`
+  * `workersactive`
+  * `workerrank`
+  * `whichproc`
+  * `procrange_recast`
+  * `localindex`
+  * `procid_and_localindex`
+  * `extremadims`
+  * `extrema_commonlastdim`
+* Utility functions to query the cluster
+  * `gethostnames`
+  * `nodenames`
+  * `nprocs_node`
+
+# Quick start
+
+```julia
+julia> addprocs(2)
+2-element Array{Int64,1}:
+ 2
+ 3
+
+julia> @everywhere using ParallelUtilities
+
+julia> pmapreduce(x->ones(2).*myid(),x->hcat(x...),1:nworkers())
+2×2 Array{Float64,2}:
+ 2.0  3.0
+ 2.0  3.0
+
+julia> pmapreduce_commutative(x->ones(2).*myid(),sum,1:nworkers())
+2-element Array{Float64,1}:
+ 5.0
+ 5.0
+
+julia> pmapsum(x->ones(2).*myid(),1:nworkers())
+2-element Array{Float64,1}:
+ 5.0
+ 5.0
+```
+
 # Usage
 
 The package splits up a collection of ranges into subparts of roughly equal length, so that all the cores are approximately equally loaded. This is best understood using an example: let's say that we have a function `f` that is defined as   
@@ -148,6 +198,36 @@ julia> pmapsum(x->ones(2).*myid(),1:nworkers())
  5.0
 ```
 
+It is possible to specify the return types of the map and reduce operations in these functions. If they are not specified they are inferred using `Base.return_types`. To specify the return types use the following variants:
+
+```julia
+julia> pmapreduce(x->ones(2).*myid(),Vector{Float64},x->hcat(x...),Matrix{Float64},1:nworkers())
+2×2 Array{Float64,2}:
+ 2.0  3.0
+ 2.0  3.0
+
+julia> pmapsum(x->ones(2).*myid(),Vector{Float64},1:nworkers())
+2-element Array{Float64,1}:
+ 5.0
+ 5.0
+```
+
+Specifying the types would lead to a type coercion if possible, or an error if a conversion is not possible. This might help in asserting the correctness of the result obtained. For example:
+
+```julia
+# The result is converted from Vector{Float64} to Vector{Int}. 
+# Conversion works as the numbers are integers
+julia> pmapsum(x->ones(2).*myid(),Vector{Int},1:nworkers())
+2-element Array{Int64,1}:
+ 5
+ 5
+
+# Conversion fails here as the numbers aren't integers
+julia> pmapsum(x->rand(2),Vector{Int},1:nworkers())
+ERROR: On worker 2:
+InexactError: Int64(0.7742577217010362)
+```
+
 ## ProductSplit
 
 In the above examples we have talked about the tasks being distributed approximately equally among the workers without going into details about the distribution, which is what we describe here. The package provides an iterator `ProductSplit` that lists that ranges of parameters that would be passed on to each core. This may equivalently be achieved using an
@@ -183,7 +263,7 @@ julia> Tuple(length(ProductSplit((xrange,yrange,zrange),10,i)) for i=1:10)
 (4, 4, 4, 4, 4, 4, 3, 3, 3, 3)
 ```
 
-The object can be generated through the function `evenlyscatterproduct` using the same signature
+The object may be generated through the function `evenlyscatterproduct` using the same signature
 
 ```julia
 julia> evenlyscatterproduct((xrange,yrange,zrange),10,4)
