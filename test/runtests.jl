@@ -8,7 +8,8 @@ addprocs(2)
     Pkg.activate(".")
     using ParallelUtilities
     import ParallelUtilities: BinaryTreeNode, RemoteChannelContainer, BranchChannel, 
-	Sorted, Unsorted, Ordering, pval, value, reducedvalue, collectvalues, reduceTreeNode
+	Sorted, Unsorted, Ordering, pval, value, reducedvalue, collectvalues, reduceTreeNode,
+    BinaryTree, constructBinaryTree, parentnoderank
 end
 
 @testset "ProductSplit" begin
@@ -440,39 +441,63 @@ end
 
 	        @test_throws ParallelUtilities.BinaryTreeError BinaryTreeNode(p,p,(2,3,4))
     	end
-    	
-    	@testset "constructBinaryTree" begin
-    		for imax = 1:10
-    			procs = collect(1:imax)
-    			tree = ParallelUtilities.constructBinaryTree(procs)
-    			@test length(tree) == length(procs)	
-    			@test tree[1].parent == 1
-    			for (rank,node) in enumerate(tree)
-    				@test node.p == procs[rank]
-    				@test node.parent == procs[ParallelUtilities.parentnoderank(rank)]
-    			end
-    		end
+    end
 
-    	    procs = [1]
-    	    tree = ParallelUtilities.constructBinaryTree(procs)
-    	    @test tree[1].children == ()
+    @testset "BinaryTree" begin
 
-    	    procs = collect(1:2)
-    	    tree = ParallelUtilities.constructBinaryTree(procs)
-    	    @test tree[1].children == (2,)
-    	    @test tree[2].children == ()
+        @testset "constructBinaryTree" begin
+            for imax = 1:10
+                procs = collect(1:imax)
+                tree = constructBinaryTree(procs)
+                @test length(tree) == length(procs) 
+                @test tree[1].parent == 1
+                for (rank,node) in enumerate(tree)
+                    @test node.p == procs[rank]
+                    @test node.parent == procs[parentnoderank(rank)]
+                end
+            end
 
-    	    procs = collect(1:8)
-    	    tree = ParallelUtilities.constructBinaryTree(procs)
-    	    @test tree[1].children == (2,3)
-    	    @test tree[2].children == (4,5)
-    	    @test tree[3].children == (6,7)
-    	    @test tree[4].children == (8,)
-    	    @test tree[5].children == ()
-    	    @test tree[6].children == ()
-    	    @test tree[7].children == ()
-    	    @test tree[8].children == ()
-    	end
+            procs = [1]
+            tree = constructBinaryTree(procs)
+            @test tree[1].children == ()
+
+            procs = collect(1:2)
+            tree = constructBinaryTree(procs)
+            @test tree[1].children == (2,)
+            @test tree[2].children == ()
+
+            procs = collect(1:8)
+            tree = constructBinaryTree(procs)
+            @test tree[1].children == (2,3)
+            @test tree[2].children == (4,5)
+            @test tree[3].children == (6,7)
+            @test tree[4].children == (8,)
+            @test tree[5].children == ()
+            @test tree[6].children == ()
+            @test tree[7].children == ()
+            @test tree[8].children == ()
+        end
+
+        @testset "Constructor" begin
+            function test_constructor(procs)
+                bt = BinaryTree(procs)
+                btvector = constructBinaryTree(procs)
+
+                @test length(bt) == length(btvector)
+                @test !isempty(bt)
+
+                for (i,btnode) in enumerate(btvector)
+                    @test bt[i] == btnode
+                end
+            end
+            
+            @test_throws DomainError BinaryTree(1:0)
+            @test_throws DomainError BinaryTree(Int[])
+
+            test_constructor(1:10)
+            test_constructor(collect(1:10))
+            test_constructor(workers())
+        end
     end
     
     @testset "RemoteChannelContainer" begin
@@ -678,7 +703,7 @@ end
     	        branches = ParallelUtilities.createbranchchannels(T,tree)
     	        @test length(branches) == length(tree)
     	        for (rank,branch) in enumerate(branches)
-    	        	parentrank = ParallelUtilities.parentnoderank(rank)
+    	        	parentrank = parentnoderank(rank)
     	        	p = branch.p
     	        	p_parent = branches[parentrank].p
     	        	@test branch.selfchannels.out.where == p
@@ -697,7 +722,7 @@ end
     	        end
     	    end
 	        
-	        tree = ParallelUtilities.constructBinaryTree(workers())
+	        tree = constructBinaryTree(workers())
 	        for T in [Int,Any,Bool,Vector{Float64},Array{ComplexF64,2}]
 	        	testbranches(T,tree)
 	        end

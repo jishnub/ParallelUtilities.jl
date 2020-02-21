@@ -602,6 +602,58 @@ end
 
 @inline nchildren(::BinaryTreeNode{N}) where {N} = N
 
+struct BinaryTree{T}
+	N :: Int # total number of nodes
+	h :: Int # Number of levels
+	twochildendind :: Int
+	onechildendind :: Int
+	procs :: T
+
+	function BinaryTree(procs::T) where {T<:AbstractVector{Int}}
+
+		N = length(procs)
+		(N >=1) || throw(DomainError(N,"need at least 1 node to create a binary tree"))
+
+		h = floor(Int,log2(N)) # Number of levels of the tree
+		Ninternalnodes = 2^h - 1
+		Nleaf = N - Ninternalnodes
+		Nonechildinternalnodes = (Ninternalnodes > 0) ? rem(Nleaf,2) : 0
+		twochildendind = div(N-1,2)
+		onechildstartind = twochildendind + 1
+		onechildendind = onechildstartind + Nonechildinternalnodes - 1
+
+		new{T}(N,h,twochildendind,onechildendind,procs)
+	end
+end
+
+Base.length(b::BinaryTree) = b.N
+# This method is not used as empty binary trees are not allowed
+# It will be removed in the next minor release
+Base.isempty(b::BinaryTree) = length(b) == 0
+
+function Base.getindex(tree::BinaryTree,i::Int)
+	procs = tree.procs
+	
+	p = procs[i]
+	p_parent = procs[parentnoderank(i)]
+	
+	if i <= tree.twochildendind
+		# These nodes have two children each
+		p_children = (procs[2i],procs[2i+1])
+
+	elseif i <= tree.onechildendind
+		# These nodes have one child each
+		p_children = (procs[2i],)
+
+	else
+		# These nodes have no children
+		p_children = ()
+	end
+
+	BinaryTreeNode(p,p_parent,p_children)
+end
+
+# This function is not used and will be removed in the next minor release
 function constructBinaryTree(procs::AbstractVector{Int})
 	N = length(procs)
 	h = floor(Int,log2(N)) # Number of levels of the tree
@@ -621,7 +673,7 @@ function constructBinaryTree(procs::AbstractVector{Int})
 			# These nodes have two children each
 			p_children = (procs[2i],procs[2i+1])
 		elseif onechildstartind <= i <= onechildendind
-			# These nodes have one children each
+			# These nodes have one child each
 			p_children = (procs[2i],)
 		else
 			# These nodes have no children
@@ -682,10 +734,9 @@ function Base.finalize(bc::BranchChannel)
 	finalize_except_wherewhence(bc.parentchannels)
 end
 
-function createbranchchannels(::Type{T},tree::Vector{BinaryTreeNode}) where {T}
+function createbranchchannels(::Type{T},tree::Union{Vector{BinaryTreeNode},BinaryTree}) where {T}
 	branches = Vector{BranchChannel}(undef,length(tree))
 	isempty(tree) && return branches
-
 	# the first node has to be created separately as its children will be linked to it
 	firstnode = tree[1]
 	N = nchildren(firstnode)
@@ -704,8 +755,7 @@ function createbranchchannels(::Type{T},tree::Vector{BinaryTreeNode}) where {T}
 end
 
 function createbranchchannels(::Type{T},iterators::Tuple) where {T}
-	procs_used = workersactive(iterators)
-	tree = constructBinaryTree(procs_used)
+	tree = BinaryTree(workersactive(iterators))
 	createbranchchannels(T,tree)
 end
 @inline createbranchchannels(iterators::Tuple) = createbranchchannels(Any,iterators)
@@ -829,6 +879,8 @@ function return_unless_error(r::RemoteChannelContainer)
 	end
 end
 
+@inline return_unless_error(b::BranchChannel) = return_unless_error(b.parentchannels)
+
 # This function does not sort the values, so it might be faster
 function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tuple,args...;kwargs...)
 
@@ -846,7 +898,7 @@ function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tupl
 		end
 	end
 
-	return_unless_error(first(branches).parentchannels)
+	return_unless_error(first(branches))
 end
 
 function pmapreduce_commutative(fmap::Function,freduce::Function,
@@ -888,7 +940,7 @@ function pmapreduce(fmap::Function,freduce::Function,iterators::Tuple,args...;kw
 		end
 	end
 
-	return_unless_error(first(branches).parentchannels)
+	return_unless_error(first(branches))
 end
 
 function pmapreduce(fmap::Function,freduce::Function,
