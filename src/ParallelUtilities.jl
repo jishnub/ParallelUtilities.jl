@@ -733,19 +733,21 @@ struct Unsorted <: Ordering end
 struct pval{T}
 	p :: Int
 	parent :: T
-
-	function pval(p::Int,val::T) where {T}
-		new{T}(p,val)
-	end
 end
-
-@inline pval(val::T) where {T} = pval(myid(),val)
 
 # Function to obtain the value of pval types
 @inline value(p::pval) = p.parent
 @inline value(p::Any) = p
 
+@inline pval(val::T) where {T} = pval{T}(myid(),val)
+@inline pval{T}(val::T) where {T} = pval{T}(myid(),val)
+@inline pval{T}(val) where {T} = pval{T}(myid(),convert(T,value(val)))
+
+@inline Base.:(==)(p1::pval,p2::pval) = (p1.p == p2.p) && (value(p1) == value(p2))
+
 @inline Base.convert(::Type{pval{T}},x) where {T} = pval(T(value(x)))
+@inline Base.convert(::Type{pval{Any}},x) = pval{Any}(value(x))
+@inline Base.convert(::Type{pval{Any}},x::pval{Any}) = x
 @inline Base.convert(::Type{pval{T}},x::pval{T}) where {T} = x
 
 ############################################################################################
@@ -753,11 +755,12 @@ end
 ############################################################################################
 
 # Wrap a pval around the mapped value if sorting is necessary
-@inline function maybepvalput!(pipe::BranchChannel,val)
+@inline function maybepvalput!(pipe::BranchChannel{T},val) where {T}
 	put!(pipe.selfchannels.out,val)
 end
-@inline function maybepvalput!(pipe::BranchChannel{<:pval},val)
-	put!(pipe.selfchannels.out,pval(value(val)))
+@inline function maybepvalput!(pipe::BranchChannel{T},val) where {T<:pval}
+	valT = T(value(val))
+	put!(pipe.selfchannels.out,valT)
 end
 
 function mapTreeNode(fmap::Function,iterator,pipe::BranchChannel,args...;kwargs...)
@@ -807,7 +810,7 @@ function reducedvalue(freduce::Function,pipe::BranchChannel{Tmap,Tred},::Sorted)
 	end
 
 	sort!(vals,by=x->x.p)
-	pval(freduce(value(v) for v in vals))
+	Tred(freduce(value(v) for v in vals))
 end
 
 function reduceTreeNode(freduce::Function,pipe::BranchChannel{Tmap,Tred},ifsort::Ordering) where {Tmap,Tred}
@@ -864,27 +867,35 @@ function pmapreduceworkers(fmap::Function,freduce::Function,iterators::Tuple,
 	return_unless_error(first(branches))
 end
 
-function infer_returntypes(fmap,freduce,iterators::Tuple)
-	firstset = map(first,iterators); T = typeof(firstset)
-	Tmap = first(Base.return_types(fmap,(T,)))
+function infer_returntypes(fmap,freduce,x::T,args...;kwargs...) where {T<:ProductSplit}
+	fmap_padded(x) = fmap(x,args...;kwargs...)
+	Tmap = first(Base.return_types(fmap_padded,(T,)))
 	Tred = first(Base.return_types(freduce,(Tuple{Tmap},)))
 	Tmap,Tred
 end
 
-infer_returntypes(fmap,freduce,iterable) = infer_returntypes(fmap,freduce,(iterable,))
-infer_returntypes(fmap,freduce,itp::Iterators.ProductIterator) = 
-	infer_returntypes(fmap,freduce,itp.iterators)
+function infer_returntypes(fmap,freduce,iterators::Tuple,args...;kwargs...)
+	iteratorsPS = evenlyscatterproduct(iterators,1,1)
+	infer_returntypes(fmap,freduce,iteratorsPS,args...;kwargs...)
+end
 
 # This function does not sort the values, so it might be faster
 function pmapreduce_commutative(fmap::Function,::Type{Tmap},
 	freduce::Function,::Type{Tred},iterators::Tuple,args...;kwargs...) where {Tmap,Tred}
-
+	
 	branches = createbranchchannels(Tmap,Tred,iterators)
 	pmapreduceworkers(fmap,freduce,iterators,branches,Unsorted(),args...;kwargs...)
 end
 
-function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tuple,args...;kwargs...)
-	Tmap,Tred = infer_returntypes(fmap,freduce,iterators)
+function pmapreduce_commutative(fmap::Function,freduce::Function,iterators::Tuple,args...;
+	infer_types = true, kwargs...)
+
+	if infer_types
+		Tmap,Tred = infer_returntypes(fmap,freduce,iterators,args...;kwargs...)
+	else
+		Tmap,Tred = Any,Any
+	end
+
 	pmapreduce_commutative(fmap,Tmap,freduce,Tred,iterators,args...;kwargs...)
 end
 
@@ -944,8 +955,14 @@ function pmapreduce(fmap::Function,::Type{Tmap},freduce::Function,::Type{Tred},
 	pmapreduceworkers(fmap,freduce,iterators,branches,Sorted(),args...;kwargs...)
 end
 
-function pmapreduce(fmap::Function,freduce::Function,iterators::Tuple,args...;kwargs...)
-	Tmap,Tred = infer_returntypes(fmap,freduce,iterators)
+function pmapreduce(fmap::Function,freduce::Function,iterators::Tuple,args...;
+	infer_types = true, kwargs...)
+
+	if infer_types
+		Tmap,Tred = infer_returntypes(fmap,freduce,iterators,args...;kwargs...)
+	else
+		Tmap,Tred = Any,Any
+	end
 	pmapreduce(fmap,Tmap,freduce,Tred,iterators,args...;kwargs...)
 end
 

@@ -228,6 +228,17 @@ ERROR: On worker 2:
 InexactError: Int64(0.7742577217010362)
 ```
 
+There might be instances where a type inference is not desirable, eg. if the functions return outputs having different types for different parameter values. In such a case type inference may be turned off by specifying the keyword argument `infer_types = false`, eg as 
+
+```julia
+julia> pmapsum(x->ones(2).*myid(),1:nworkers(),infer_types = false)
+2-element Array{Float64,1}:
+ 5.0
+ 5.0
+```
+
+Note that the keyword argument `infer_types` can not be used if the return types are specified while calling the function.
+
 ## ProductSplit
 
 In the above examples we have talked about the tasks being distributed approximately equally among the workers without going into details about the distribution, which is what we describe here. The package provides an iterator `ProductSplit` that lists that ranges of parameters that would be passed on to each core. This may equivalently be achieved using an

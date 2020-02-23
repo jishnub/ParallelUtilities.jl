@@ -9,7 +9,7 @@ addprocs(2)
     using ParallelUtilities
     import ParallelUtilities: BinaryTreeNode, RemoteChannelContainer, BranchChannel, 
 	Sorted, Unsorted, Ordering, pval, value, reducedvalue, reduceTreeNode,
-    BinaryTree, parentnoderank, nchildren, infer_returntypes
+    BinaryTree, parentnoderank, nchildren, infer_returntypes, maybepvalput!
 end
 
 @testset "ProductSplit" begin
@@ -772,7 +772,9 @@ end
 	@testset "pval" begin
 		p = pval(myid(),3)
 		q = pval(3)
-	    @test p == q
+        r = pval{Int}(3.0)
+        s = pval{Int}(3)
+	    @test p == q == r == s
 	    @test value(p) == 3
 	    @test value(3) == 3
 	    @test value(p) == value(q)
@@ -785,36 +787,77 @@ end
     @testset "infer_returntypes" begin
         iterable = 1:10
         iterators = (iterable,)
+        iteratorsPS = evenlyscatterproduct(iterators,1,1)
         fmap = x -> 1
         fred = sum
         @test infer_returntypes(fmap,fred,iterators) == (Int,Int)
-        @test infer_returntypes(fmap,fred,iterable) == (Int,Int)
-        @test infer_returntypes(fmap,fred,Iterators.product(iterable)) == (Int,Int)
+        @test infer_returntypes(fmap,fred,iteratorsPS) == (Int,Int)
 
         fmap = x->ones(Int,1)
         fred = x->hcat(x...)
         @test infer_returntypes(fmap,fred,iterators) == (Vector{Int},Matrix{Int})
-        @test infer_returntypes(fmap,fred,iterable) == (Vector{Int},Matrix{Int})
-        @test infer_returntypes(fmap,fred,Iterators.product(iterable)) == (Vector{Int},Matrix{Int})
+        @test infer_returntypes(fmap,fred,iteratorsPS) == (Vector{Int},Matrix{Int})
+
+        fmap(x::ProductSplit,y) = sum(i[1] for i in x) + y
+        fred = sum
+        @test infer_returntypes(fmap,fred,iteratorsPS,1) == (Int,Int)
     end
 
 	@testset "mapTreeNode" begin
 
 		@testset "maybepvalput!" begin
 		    pipe = BranchChannel{Int,Int}(0)
-		    ParallelUtilities.maybepvalput!(pipe,0)
+		    maybepvalput!(pipe,0)
 		    @test isready(pipe.selfchannels.out)
 		    @test take!(pipe.selfchannels.out) == 0
 
 		    pipe = BranchChannel{pval,pval}(0)
-		    ParallelUtilities.maybepvalput!(pipe,0)
+		    maybepvalput!(pipe,0)
 		    @test isready(pipe.selfchannels.out)
 		    @test take!(pipe.selfchannels.out) == pval(0)
 
             pipe = BranchChannel{pval{Int},pval{Int}}(0)
-            ParallelUtilities.maybepvalput!(pipe,0)
+            maybepvalput!(pipe,0)
             @test isready(pipe.selfchannels.out)
             @test take!(pipe.selfchannels.out) == pval(0)
+
+            T = Vector{ComplexF64}
+            pipe = BranchChannel{pval{T},pval{T}}(1)
+
+            val = ones(1).*im
+            maybepvalput!(pipe,val)
+            @test isready(pipe.selfchannels.out)
+            @test take!(pipe.selfchannels.out) == pval(ComplexF64[im])
+
+            val = ones(1)
+            maybepvalput!(pipe,val)
+            @test isready(pipe.selfchannels.out)
+            @test take!(pipe.selfchannels.out) == pval(ComplexF64[1])
+
+            T = Vector{Float64}
+            pipe = BranchChannel{pval{T},pval{T}}(1)
+
+            val = ones(1)
+            maybepvalput!(pipe,val)
+            @test isready(pipe.selfchannels.out)
+            @test take!(pipe.selfchannels.out) == pval(Float64[1])
+
+            val = ones(Int,1)
+            maybepvalput!(pipe,val)
+            @test isready(pipe.selfchannels.out)
+            @test take!(pipe.selfchannels.out) == pval(Float64[1])
+
+            pipe = BranchChannel{pval,pval}(1)
+
+            val = ones(1)
+            maybepvalput!(pipe,val)
+            @test isready(pipe.selfchannels.out)
+            @test take!(pipe.selfchannels.out) == pval(Float64[1])
+
+            val = ones(Int,1)
+            maybepvalput!(pipe,val)
+            @test isready(pipe.selfchannels.out)
+            @test take!(pipe.selfchannels.out) == pval(Int[1])
 		end
 
 		function test_on_pipe(fn,iterator,pipe,result_expected)
@@ -1082,14 +1125,19 @@ end
                 res_exp = sum(1:nworkers())
 			    @test pmapsum(x->workerrank(),Int,1:nworkers()) == res_exp
                 @test pmapsum(x->workerrank(),1:nworkers()) == res_exp
+                @test pmapsum(x->workerrank(),1:nworkers(),infer_types = false) == res_exp
 			    @test pmapsum(x->workerrank(),Int,(1:nworkers(),)) == res_exp
                 @test pmapsum(x->workerrank(),(1:nworkers(),)) == res_exp
+                @test pmapsum(x->workerrank(),(1:nworkers(),),infer_types = false) == res_exp
 			    @test pmapsum(x->workerrank(),Int,Iterators.product(1:nworkers())) == res_exp
                 @test pmapsum(x->workerrank(),Iterators.product(1:nworkers())) == res_exp
+                @test pmapsum(x->workerrank(),Iterators.product(1:nworkers()),infer_types = false) == res_exp
                 @test pmapsum(x->workerrank(),Int,(1:nworkers(),1:1)) == res_exp
 			    @test pmapsum(x->workerrank(),(1:nworkers(),1:1)) == res_exp
+                @test pmapsum(x->workerrank(),(1:nworkers(),1:1),infer_types = false) == res_exp
 			    @test pmapsum(x->workerrank(),Int,Iterators.product(1:nworkers(),1:1)) == res_exp
                 @test pmapsum(x->workerrank(),Iterators.product(1:nworkers(),1:1)) == res_exp
+                @test pmapsum(x->workerrank(),Iterators.product(1:nworkers(),1:1),infer_types = false) == res_exp
 			    @test pmapsum(x->myid(),1:nworkers()) == sum(workers())
 		    end
 		    
@@ -1123,7 +1171,7 @@ end
 		    end
 
 		    @testset "errors" begin
-		        @test_throws exceptiontype pmapsum(x->throws(BoundsError()),1:10)
+		        @test_throws exceptiontype pmapsum(x->error("map"),1:10)
 		    end
 		end
 
@@ -1159,7 +1207,7 @@ end
 		    end
 
 		    @testset "errors" begin
-		        @test_throws exceptiontype pmapsum_elementwise(x->throws(BoundsError()),1:10)
+		        @test_throws exceptiontype pmapsum_elementwise(x->error("hi"),1:10)
 		    end
 		end
 
@@ -1175,14 +1223,19 @@ end
                 res_exp = sum(workers())
 			    @test pmapreduce_commutative(x->myid(),Int,sum,Int,1:nworkers()) == res_exp
                 @test pmapreduce_commutative(x->myid(),sum,1:nworkers()) == res_exp
+                @test pmapreduce_commutative(x->myid(),sum,1:nworkers(),infer_types = false) == res_exp
                 @test pmapreduce_commutative(x->myid(),Int,sum,Int,(1:nworkers(),)) == res_exp
 			    @test pmapreduce_commutative(x->myid(),sum,(1:nworkers(),)) == res_exp
+                @test pmapreduce_commutative(x->myid(),sum,(1:nworkers(),),infer_types = false) == res_exp
                 @test pmapreduce_commutative(x->myid(),Int,sum,Int,Iterators.product(1:nworkers())) == res_exp
 			    @test pmapreduce_commutative(x->myid(),sum,Iterators.product(1:nworkers())) == res_exp
+                @test pmapreduce_commutative(x->myid(),sum,Iterators.product(1:nworkers()),infer_types = false) == res_exp
 			    @test pmapreduce_commutative(x->myid(),Int,sum,Int,(1:nworkers(),1:1)) == res_exp
                 @test pmapreduce_commutative(x->myid(),sum,(1:nworkers(),1:1)) == res_exp
+                @test pmapreduce_commutative(x->myid(),sum,(1:nworkers(),1:1),infer_types = false) == res_exp
                 @test pmapreduce_commutative(x->myid(),Int,sum,Int,Iterators.product(1:nworkers(),1:1)) == res_exp
 			    @test pmapreduce_commutative(x->myid(),sum,Iterators.product(1:nworkers(),1:1)) == res_exp
+                @test pmapreduce_commutative(x->myid(),sum,Iterators.product(1:nworkers(),1:1),infer_types = false) == res_exp
 			    @test pmapreduce_commutative(x->myid(),sum,1:nworkers()) == pmapsum(x->myid(),1:nworkers())
 		    end
 		    @testset "prod" begin
@@ -1203,12 +1256,11 @@ end
 
 		    @testset "errors" begin
 		        @test_throws exceptiontype pmapreduce_commutative(
-												x->throws(BoundsError()),sum,1:10)
+												x->error("map"),sum,1:10)
 		        @test_throws exceptiontype pmapreduce_commutative(
-												identity,x->throws(BoundsError()),1:10)
+												identity,x->error("reduce"),1:10)
 				@test_throws exceptiontype pmapreduce_commutative(
-												x->throw(ErrorException("eh")),
-												x->throws(BoundsError()),1:10)
+												x->error("map"),x->error("reduce"),1:10)
 		    end
             @testset "type coercion" begin
                 @test_throws exceptiontype pmapreduce_commutative(x->[1.1],Vector{Int},
@@ -1250,12 +1302,12 @@ end
 
 			@testset "errors" begin
 				@test_throws exceptiontype pmapreduce_commutative_elementwise(
-												x->throws(BoundsError()),sum,1:10)
+												x->error("map"),sum,1:10)
 				@test_throws exceptiontype pmapreduce_commutative_elementwise(
-												identity,x->throws(BoundsError()),1:10)
+												identity,x->error("reduce"),1:10)
 				@test_throws exceptiontype pmapreduce_commutative_elementwise(
-												x->throw(ErrorException("eh")),
-												x->throws(BoundsError()),1:10)
+												x->error("map"),
+												x->error("reduce"),1:10)
 			end
 		end
 	end
@@ -1266,14 +1318,18 @@ end
                 res_exp = sum(workers())
                 @test pmapreduce(x->myid(),Int,sum,Int,1:nworkers()) == res_exp
                 @test pmapreduce(x->myid(),sum,1:nworkers()) == res_exp
+                @test pmapreduce(x->myid(),sum,1:nworkers(),infer_types = false) == res_exp
 			    @test pmapreduce(x->myid(),Int,sum,Int,(1:nworkers(),)) == res_exp
 			    @test pmapreduce(x->myid(),sum,(1:nworkers(),)) == res_exp
+                @test pmapreduce(x->myid(),sum,(1:nworkers(),),infer_types = false) == res_exp
                 @test pmapreduce(x->myid(),Int,sum,Int,Iterators.product(1:nworkers())) == res_exp
 			    @test pmapreduce(x->myid(),sum,Iterators.product(1:nworkers())) == res_exp
                 @test pmapreduce(x->myid(),Int,sum,Int,(1:nworkers(),1:1)) == res_exp
 			    @test pmapreduce(x->myid(),sum,(1:nworkers(),1:1)) == res_exp
+                @test pmapreduce(x->myid(),sum,(1:nworkers(),1:1),infer_types = false) == res_exp
                 @test pmapreduce(x->myid(),Int,sum,Int,Iterators.product(1:nworkers(),1:1)) == res_exp
 			    @test pmapreduce(x->myid(),sum,Iterators.product(1:nworkers(),1:1)) == res_exp
+                @test pmapreduce(x->myid(),sum,Iterators.product(1:nworkers(),1:1),infer_types = false) == res_exp
 			    @test pmapreduce(x->myid(),Int,sum,Int,1:nworkers()) == pmapsum(x->myid(),Int,1:nworkers())
                 @test pmapreduce(x->myid(),Int,sum,Int,1:nworkers()) == pmapsum(x->myid(),1:nworkers())
                 @test pmapreduce(x->myid(),sum,1:nworkers()) == pmapsum(x->myid(),1:nworkers())
@@ -1285,6 +1341,7 @@ end
 			    @test pmapreduce(x->ones(2),Vector{Float64},
                     x->vcat(x...),Vector{Float64},1:nworkers()) == res_vcat
                 @test pmapreduce(x->ones(2),x->vcat(x...),1:nworkers()) == res_vcat
+                @test pmapreduce(x->ones(2),x->vcat(x...),1:nworkers(),infer_types = false) == res_vcat
 			    @test pmapreduce(x->ones(2),Vector{Float64},
                     x->hcat(x...),Matrix{Float64},1:nworkers()) == res_hcat
                 @test pmapreduce(x->ones(2),x->hcat(x...),1:nworkers()) == res_hcat
@@ -1308,10 +1365,9 @@ end
 		    end
 
 			@testset "errors" begin
-			    @test_throws exceptiontype pmapreduce(x->throws(BoundsError()),sum,1:10)
-				@test_throws exceptiontype pmapreduce(identity,x->throws(BoundsError()),1:10)
-				@test_throws exceptiontype pmapreduce(x->throw(ErrorException("eh")),
-												x->throws(BoundsError()),1:10)
+			    @test_throws exceptiontype pmapreduce(x->error("map"),sum,1:10)
+				@test_throws exceptiontype pmapreduce(identity,x->error("reduce"),1:10)
+				@test_throws exceptiontype pmapreduce(x->error("map"),x->error("reduce"),1:10)
 			end
 
             @testset "type coercion" begin
