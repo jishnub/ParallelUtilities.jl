@@ -857,13 +857,14 @@ end
 @inline return_unless_error(b::BranchChannel) = return_unless_error(b.parentchannels)
 
 function pmapreduceworkers(fmap::Function,freduce::Function,iterators::Tuple,
-	branches,ord::Ordering,args...;kwargs...)
+	branches,ord::Ordering,args...;
+	progressdesc="Progress in pmapreduce : ",kwargs...)
 
 	num_workers_active = nworkersactive(iterators)
 
 	nmap,nred = 0,0
 	progresschannel = RemoteChannel(()->Channel{Tuple{Bool,Bool}}(2num_workers_active))
-	progressbar = Progress(2num_workers_active,1,"Progress in pmapreduce : ")
+	progressbar = Progress(2num_workers_active,1,progressdesc)
 
 	# Run the function on each processor and compute the reduction at each node
 	@sync begin
