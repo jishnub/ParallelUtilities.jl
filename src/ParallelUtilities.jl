@@ -1,4 +1,5 @@
 module ParallelUtilities
+using ProgressMeter
 
 using Reexport
 @reexport using Distributed
@@ -763,7 +764,8 @@ end
 	put!(pipe.selfchannels.out,valT)
 end
 
-function mapTreeNode(fmap::Function,iterator,pipe::BranchChannel,args...;kwargs...)
+function mapTreeNode(fmap::Function,iterator,pipe::BranchChannel,
+	progress::RemoteChannel,args...;kwargs...)
 	# Evaluate the function
 	# Store the error flag locally
 	# If there are no errors then store the result locally
@@ -775,6 +777,8 @@ function mapTreeNode(fmap::Function,iterator,pipe::BranchChannel,args...;kwargs.
 	catch
 		put!(pipe.selfchannels.err,true)
 		rethrow()
+	finally
+		put!(progress,(true,false))
 	end
 end
 
@@ -813,7 +817,8 @@ function reducedvalue(freduce::Function,pipe::BranchChannel{Tmap,Tred},::Sorted)
 	Tred(freduce(value(v) for v in vals))
 end
 
-function reduceTreeNode(freduce::Function,pipe::BranchChannel{Tmap,Tred},ifsort::Ordering) where {Tmap,Tred}
+function reduceTreeNode(freduce::Function,pipe::BranchChannel{Tmap,Tred},
+	ifsort::Ordering,progress::RemoteChannel) where {Tmap,Tred}
 	# This function that communicates with the parent and children
 
 	# Start by checking if there is any error locally in the map,
@@ -831,9 +836,12 @@ function reduceTreeNode(freduce::Function,pipe::BranchChannel{Tmap,Tred},ifsort:
 		catch e
 			put!(pipe.parentchannels.err,true)
 			rethrow()
+		finally
+			put!(progress,(false,true))
 		end
 	else
 		put!(pipe.parentchannels.err,true)
+		put!(progress,(false,true))
 	end
 
 	finalize(pipe)
@@ -853,15 +861,34 @@ function pmapreduceworkers(fmap::Function,freduce::Function,iterators::Tuple,
 
 	num_workers_active = nworkersactive(iterators)
 
-	# Run the function on each processor and compute the reduction at each node
-	@sync for (rank,mypipe) in enumerate(branches)
-		@async begin
-			p = mypipe.p
-			iterable_on_proc = evenlyscatterproduct(iterators,num_workers_active,rank)
+	nmap,nred = 0,0
+	progresschannel = RemoteChannel(()->Channel{Tuple{Bool,Bool}}(2num_workers_active))
+	progressbar = Progress(2num_workers_active,1,"Progress in pmapreduce : ")
 
-			@spawnat p mapTreeNode(fmap,iterable_on_proc,mypipe,args...;kwargs...)
-			@spawnat p reduceTreeNode(freduce,mypipe,ord)
+	# Run the function on each processor and compute the reduction at each node
+	@sync begin
+		for (rank,mypipe) in enumerate(branches)
+			@async begin
+				p = mypipe.p
+				iterable_on_proc = evenlyscatterproduct(iterators,num_workers_active,rank)
+
+				@spawnat p mapTreeNode(fmap,iterable_on_proc,mypipe,
+										progresschannel,args...;kwargs...)
+				@spawnat p reduceTreeNode(freduce,mypipe,ord,progresschannel)
+			end
 		end
+		
+		for i = 1:2num_workers_active
+			mapdone,reddone = take!(progresschannel)
+			if mapdone
+				nmap += 1
+			end
+			if reddone
+				nred += 1
+			end
+			next!(progressbar;showvalues=[(:map,nmap),(:reduce,nred)])
+		end
+		finish!(progressbar)
 	end
 
 	return_unless_error(first(branches))

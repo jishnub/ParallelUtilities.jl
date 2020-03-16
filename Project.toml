@@ -1,14 +1,16 @@
 name = "ParallelUtilities"
 uuid = "fad6cfc8-4f83-11e9-06cc-151124046ad0"
 authors = ["Jishnu Bhattacharya <jishnuonline@gmail.com>"]
-version = "0.5.0"
+version = "0.6.0"
 
 [deps]
 Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
+ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
 Reexport = "189a3867-3050-52da-a836-e630ba90ab69"
 
 [compat]
 Reexport = "0.2"
+ProgressMeter = "1.2"
 julia = "1.2"
 
 [extras]

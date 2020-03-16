@@ -8,7 +8,7 @@ addprocs(2)
     Pkg.activate(".")
     using ParallelUtilities
     import ParallelUtilities: BinaryTreeNode, RemoteChannelContainer, BranchChannel, 
-	Sorted, Unsorted, Ordering, pval, value, reducedvalue, reduceTreeNode,
+	Sorted, Unsorted, Ordering, pval, value, reducedvalue, reduceTreeNode, mapTreeNode,
     BinaryTree, parentnoderank, nchildren, infer_returntypes, maybepvalput!
 end
 
@@ -861,7 +861,8 @@ end
 		end
 
 		function test_on_pipe(fn,iterator,pipe,result_expected)
-			@test_throws ErrorException ParallelUtilities.mapTreeNode(x->error(""),iterator,pipe)
+            progressrc = RemoteChannel(()->Channel{Tuple{Bool,Bool}}(2nworkers()))
+			@test_throws ErrorException mapTreeNode(x->error(""),iterator,pipe,progressrc)
 			@test !isready(pipe.selfchannels.out) # should not have any result as there was an error
 			@test isready(pipe.selfchannels.err)
 			@test take!(pipe.selfchannels.err) # error flag should be true
@@ -871,7 +872,7 @@ end
 			@test !isready(pipe.childrenchannels.out)
 			@test !isready(pipe.childrenchannels.err)
 
-			ParallelUtilities.mapTreeNode(fn,iterator,pipe)
+			mapTreeNode(fn,iterator,pipe,progressrc)
 			@test isready(pipe.selfchannels.err)
 			@test !take!(pipe.selfchannels.err) # error flag should be false
 			@test !isready(pipe.selfchannels.err)
@@ -1001,14 +1002,16 @@ end
 			@testset "reduceTreeNode" begin
 
 		    	function testreduction(freduce::Function,pipe::BranchChannel,
-			    		ifsorted::Ordering,res_exp)
+		    		ifsorted::Ordering,res_exp)
 
 		    		@test !isready(pipe.parentchannels.out)
 		    		@test !isready(pipe.parentchannels.err)
 
+                    progressrc = RemoteChannel(()->Channel{Tuple{Bool,Bool}}(2nworkers()))
+
 		    		try
 			    		wait(@spawnat pipe.p putselfchildren!(pipe,ifsorted))
-			    		reduceTreeNode(freduce,pipe,ifsorted)
+			    		reduceTreeNode(freduce,pipe,ifsorted,progressrc)
 			    	catch
 			    		rethrow()
 			    	end
