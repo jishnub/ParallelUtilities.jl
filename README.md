@@ -27,7 +27,6 @@ julia> using ParallelUtilities
   * `evenlyscatterproduct`
   * `nworkersactive`
   * `workersactive`
-  * `workerrank`
   * `whichproc`
   * `procrange_recast`
   * `localindex`
@@ -106,7 +105,7 @@ The first six processors receive 4 tuples of parameters each and the final four 
 
 The package provides versions of `pmap` with an optional reduction. These differ from the one provided by `Distributed` in a few key aspects: firstly, the iterator product of the argument is what is passed to the function and not the arguments by elementwise, so the i-th task will be `Iterators.product(args...)[i]` and not `[x[i] for x in args]`. Specifically the second set of parameters in the example above will be `(2,2,3)` and not `(2,3,4)`.
 
-Secondly, the iterator is passed to the function in batches and not elementwise, and it is left to the function to iterate over the collection. Thirdly, the tasks are passed on to processors sorted by rank, so the first task is passed to the first processor and the last to the last worker that has any tasks assigned to it. The tasks are also approximately evenly distributed across processors, assuming that the function takes an equal amount of time to run for each set of parameters. The function `pmapbatch_elementwise` is also exported that passes the elements to the function one-by-one as unwrapped tuples. This produces the same result as `pmap` where each worker is assigned batches of approximately equal sizes taken from the iterator product.
+Secondly, the iterator is passed to the function in batches and not elementwise, and it is left to the function to iterate over the collection. Thirdly, the tasks are passed on to processors sorted by rank, so the first task is passed to the first processor and the last to the last active worker. The tasks are also approximately evenly distributed across processors. The function `pmapbatch_elementwise` is also exported that passes the elements to the function one-by-one as unwrapped tuples. This produces the same result as `pmap` where each worker is assigned batches of approximately equal sizes taken from the iterator product.
 
 ### pmapbatch and pmapbatch_elementwise
 
@@ -147,7 +146,7 @@ julia> Tuple(p)
 
 ### pmapsum and pmapreduce
 
-Often a parallel execution is followed by a reduction (eg. a sum over the results). A reduction may be commutative (in which case the order of results do not matter), or non-commutative (in which the order does matter). There are two functions that are exported that carry out these tasks: `pmapreduce_commutative` and `pmapreduce`, where the former does not preserve ordering and the latter does. The former might be slightly faster as it does not have to sort the results to preserve ordering. For convenience, the package also provides the function `pmapsum` that chooses `sum` as the reduction operator. The map-reduce operation is similar in many ways to the distributed `for` loop provided by julia, but the main difference is that the reduction operation is not binary for the functions in this package (eg. we need `sum` and not `(+)`to add the results). There is also the difference as above that the function gets the parameters in batches, with functions having the suffix `_elementwise` taking on parameters individually as unwrapped tuples as above. The function `pmapreduce` does not take on parameters elementwise at this point, although this might be implemented in the future.
+Often a parallel execution is followed by a reduction (eg. a sum over the results). A reduction may be commutative (in which case the order of results do not matter), or non-commutative (in which the order does matter). There are two functions that are exported that carry out these tasks: `pmapreduce_commutative` and `pmapreduce`, where the former does not preserve ordering and the latter does. For convenience, the package also provides the function `pmapsum` that chooses `sum` as the reduction operator. The map-reduce operation is similar in many ways to the distributed `for` loop provided by julia, but the main difference is that the reduction operation is not binary for the functions in this package (eg. we need `sum` and not `(+)`to add the results). There is also the difference as above that the function gets the parameters in batches, with functions having the suffix `_elementwise` taking on parameters individually as unwrapped tuples as above. The function `pmapreduce` does not take on parameters elementwise at this point, although this might be implemented in the future.
 
 As an example, to sum up a list of numbers in parallel we may call
 ```julia
@@ -185,7 +184,9 @@ julia> pmapreduce(x->ones(2).*myid(),x->hcat(x...),1:nworkers())
  2.0  3.0
 ```
 
-The functions `pmapreduce` produces the same result as `pmapreduce_commutative` if the reduction operator is commutative (ie. the order of results received from the children workers does not matter). The function `pmapreduce_commutative` might be faster as it does not sort the results received from the workers before reduction. This is what is used by the function `pmapsum` that chooses the reduction operator to be a sum.
+The functions `pmapreduce` produces the same result as `pmapreduce_commutative` if the reduction operator is commutative (ie. the order of results received from the children workers does not matter).
+
+The function `pmapsum` sets the reduction operator to be a sum.
 
 ```julia
 julia> sum(workers())
@@ -198,14 +199,16 @@ julia> pmapsum(x->ones(2).*myid(),1:nworkers())
  5.0
 ```
 
-It is possible to specify the return types of the map and reduce operations in these functions. If they are not specified they are inferred using `Base.return_types`. To specify the return types use the following variants:
+It is possible to specify the return types of the map and reduce operations in these functions. To specify the return types use the following variants:
 
 ```julia
+# Signature is pmapreduce(fmap,Tmap,freduce,Treduce,iterators)
 julia> pmapreduce(x->ones(2).*myid(),Vector{Float64},x->hcat(x...),Matrix{Float64},1:nworkers())
 2×2 Array{Float64,2}:
  2.0  3.0
  2.0  3.0
 
+# Signature is pmapsum(fmap,Tmap,iterators)
 julia> pmapsum(x->ones(2).*myid(),Vector{Float64},1:nworkers())
 2-element Array{Float64,1}:
  5.0
@@ -228,16 +231,34 @@ ERROR: On worker 2:
 InexactError: Int64(0.7742577217010362)
 ```
 
-There might be instances where a type inference is not desirable, eg. if the functions return outputs having different types for different parameter values. In such a case type inference may be turned off by specifying the keyword argument `infer_types = false`, eg as 
+### Progress bar
+
+The progress of the map-reduce operation might be tracked by setting the keyword argument `showprogress` to true. This might be useful in case certain workers have a heavier load than others.
 
 ```julia
-julia> pmapsum(x->ones(2).*myid(),1:nworkers(),infer_types = false)
-2-element Array{Float64,1}:
- 5.0
- 5.0
+# Running on 8 workers, artificially induce load using sleep
+julia> pmapreduce(x->(sleep(myid());myid()),x->hcat(x...),1:nworkers(),showprogress=true)
+Progress in pmapreduce : 100%|██████████████████████████████████████████████████| Time: 0:00:09
+  map:     8
+  reduce:  8
+1×8 Array{Int64,2}:
+ 2  3  4  5  6  7  8  9
+
+julia> pmapreduce(x->(sleep(myid());myid()),x->hcat(x...),1:nworkers(),showprogress=true,progressdesc="Progress : ")
+Progress : 100%|████████████████████████████████████████████████████████████████| Time: 0:00:09
+  map:     8
+  reduce:  8
+1×8 Array{Int64,2}:
+ 2  3  4  5  6  7  8  9
 ```
 
-Note that the keyword argument `infer_types` can not be used if the return types are specified while calling the function.
+Note that this does not track the progress of the individual maps, it merely tracks how many are completed.
+
+### Why two mapreduce functions?
+
+The two separate functions `pmapreduce` and `pmapreduce_commutative` exist for historical reasons. They use different binary tree structures for reduction. The commutative one might be removed in the future in favour of `pmapreduce`.
+
+
 
 ## ProductSplit
 
