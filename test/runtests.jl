@@ -173,7 +173,7 @@ end
 			        	@test begin
 			        		res = fn(ps,dim=dim) == fn(x[dim] for x in pcol)
 			        		if !res
-			        			println("ProductSplit(",iters,",",np,",",p,")")
+			        			println(summary(ps))
 			        		end
 			        		res
 			        	end
@@ -182,9 +182,16 @@ end
 			end
 
 		    for iters in various_iters,	fn in [maximum,minimum,extrema]
-
 		        checkPSextrema(iters,fn)
 		    end
+
+            @test minimum(ProductSplit((1:5,),2,1)) == 1
+            @test maximum(ProductSplit((1:5,),2,1)) == 3
+            @test extrema(ProductSplit((1:5,),2,1)) == (1,3)
+
+            @test minimum(ProductSplit((1:5,),2,2)) == 4
+            @test maximum(ProductSplit((1:5,),2,2)) == 5
+            @test extrema(ProductSplit((1:5,),2,2)) == (4,5)
     	end
 
     	@testset "extremadims" begin
