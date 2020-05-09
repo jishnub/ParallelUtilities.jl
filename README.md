@@ -24,13 +24,12 @@ julia> using ParallelUtilities
   * `pmapreduce_elementwise`
   * `pmapsum_elementwise`
 * Functions to evenly split a Tuple of ranges
-  * `evenlyscatterproduct`
-  * `nworkersactive`
-  * `workersactive`
+  * `ProductSplit`
+  * `ntasks`
   * `whichproc`
   * `procrange_recast`
   * `localindex`
-  * `procid_and_localindex`
+  * `whichproc_localindex`
   * `extremadims`
   * `extrema_commonlastdim`
 * Utility functions to query the cluster
@@ -82,10 +81,10 @@ julia> xrange,yrange,zrange = 1:3,2:4,3:6 # ranges should be strictly increasing
 
 There are a total of 36 possible `(x,y,z)` combinations possible given these ranges. Let's say that we would like to split the evaluation of the function over 10 processors. We describe the simple way to evaluate this and then explain how this is achieved.
 
-The set of parameters may be split up using the function `evenlyscatterproduct`. In this example each of the 10 processors receive a chunk as listed below
+The set of parameters may be split up using the function `ProductSplit`. In this example each of the 10 processors receive a chunk as listed below
 
 ```julia
-julia> [collect(evenlyscatterproduct((xrange,yrange,zrange),10,i)) for i=1:10]
+julia> [collect(ProductSplit((xrange,yrange,zrange),10,i)) for i=1:10]
 10-element Array{Array{Tuple{Int64,Int64,Int64},1},1}:
  [(1, 2, 3), (2, 2, 3), (3, 2, 3), (1, 3, 3)]
  [(2, 3, 3), (3, 3, 3), (1, 4, 3), (2, 4, 3)]
@@ -258,8 +257,6 @@ Note that this does not track the progress of the individual maps, it merely tra
 
 The two separate functions `pmapreduce` and `pmapreduce_commutative` exist for historical reasons. They use different binary tree structures for reduction. The commutative one might be removed in the future in favour of `pmapreduce`.
 
-
-
 ## ProductSplit
 
 In the above examples we have talked about the tasks being distributed approximately equally among the workers without going into details about the distribution, which is what we describe here. The package provides an iterator `ProductSplit` that lists that ranges of parameters that would be passed on to each core. This may equivalently be achieved using an
@@ -295,13 +292,6 @@ julia> Tuple(length(ProductSplit((xrange,yrange,zrange),10,i)) for i=1:10)
 (4, 4, 4, 4, 4, 4, 3, 3, 3, 3)
 ```
 
-The object may be generated through the function `evenlyscatterproduct` using the same signature
-
-```julia
-julia> evenlyscatterproduct((xrange,yrange,zrange),10,4)
-ProductSplit{Tuple{Int64,Int64,Int64},3,UnitRange{Int64}}((1:3, 2:4, 3:6), (0, 3, 9), 10, 4, 13, 16)
-```
-
 ### Indexing
 
 The iterator supports fast indexing
@@ -325,12 +315,9 @@ julia> params_long = (xrange_long,yrange_long,zrange_long);
 julia> ps_long = ProductSplit(params_long,10,4)
 ProductSplit{Tuple{Int64,Int64,Int64},3,UnitRange{Int64}}((1:3000, 1:3000, 1:3000), (0, 3000, 9000000), 10, 4, 8100000001, 10800000000)
 
-julia> length(ps_long)
-2700000000
-
-julia> @btime length($ps_long) # this is fast
-  0.034 ns (0 allocations: 0 bytes)
-2700000000
+# Evaluate length using random ranges to avoid compiler optimizations
+julia> @btime length(p) setup=(n=rand(3000:4000);p=ProductSplit((1:n,1:n,1:n),200,2));
+  2.674 ns (0 allocations: 0 bytes)
 
 julia> @btime $ps_long[1000000] # also fast, does not iterate
   32.530 ns (0 allocations: 0 bytes)
@@ -384,18 +371,18 @@ julia> @btime whichproc($params_long,$val,10)
 We can compute the ranges of each variable on any processor in `O(1)` time. 
 
 ```julia
-julia> extrema(ps,2) # extrema of the second parameter on this processor
+julia> extrema(ps,dim=2) # extrema of the second parameter on this processor
 (3, 4)
 
-julia> Tuple(extrema(ps,i) for i in 1:3)
+julia> Tuple(extrema(ps,dim=i) for i in 1:3)
 ((1, 3), (3, 4), (4, 4))
 
 # Minimum and maximum work similarly
 
-julia> (minimum(ps,2),maximum(ps,2))
+julia> (minimum(ps,dim=2),maximum(ps,dim=2))
 (3, 4)
 
-julia> @btime extrema($ps_long,2)
+julia> @btime extrema($ps_long,dim=2)
   52.813 ns (0 allocations: 0 bytes)
 (1, 3000)
 ```

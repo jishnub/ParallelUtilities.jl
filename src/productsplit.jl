@@ -1,3 +1,12 @@
+"""
+	ProductSplit{T,N,Q}
+
+Iterator that loops over the outer product of ranges in 
+reverse-lexicographic order. The ranges need to be strictly
+increasing. Given `N` ranges, 
+each element returned by the iterator will be 
+a tuple of length `N` with one element from each range.
+"""
 struct ProductSplit{T,N,Q}
 	iterators :: Q
 	togglelevels :: NTuple{N,Int}
@@ -37,11 +46,37 @@ function _cumprod(n::Int,tl::Tuple)
 	(n,_cumprod(n*first(tl),Base.tail(tl))...)
 end
 
-@inline ntasks(tl::Tuple) = prod(map(length,tl))
+"""
+	ntasks(iterators::Tuple)
+
+The total number of elements in the outer product of the ranges contained in 
+`iterators`, equal to `prod(length.(iterators))`
+"""
+@inline ntasks(iterators::Tuple) = mapreduce(length,*,iterators)
 @inline ntasks(ps::ProductSplit) = ntasks(ps.iterators)
 
+"""
+	ProductSplit(iterators, np::Int, p::Int)
+
+Construct a `ProductSplit` iterator that represents the outer product 
+of the iterators split over `np` workers, with this instance reprsenting 
+the values on the `p`-th worker.
+
+# Examples
+```jldoctest
+julia> ProductSplit((1:2,4:5), 2, 1) |> collect
+2-element Array{Tuple{Int64,Int64},1}:
+ (1, 4)
+ (2, 4)
+
+julia> ProductSplit((1:2,4:5), 2, 2) |> collect
+2-element Array{Tuple{Int64,Int64},1}:
+ (1, 5)
+ (2, 5)
+```
+"""
 function ProductSplit(iterators::Tuple{Vararg{AbstractRange}},np::Int,p::Int)
-	len = Base.Iterators._prod_size(iterators)
+	len = size.(iterators,1)
 	Nel = prod(len)
 	togglelevels = _cumprod(len)
 	d,r = divrem(Nel,np)
@@ -179,8 +214,7 @@ function _checknorollover(t,firstindchild,lastindchild)
 end
 _checknorollover(::Tuple{},::Tuple{},::Tuple{}) = true
 
-@inline function Base.maximum(ps::ProductSplit{<:Any,1},dim::Int=1)
-	@boundscheck (dim > 1) && throw(BoundsError(ps.iterators,dim))
+@inline function Base.maximum(ps::ProductSplit{<:Any,1})
 	isempty(ps) && return nothing
 	lastindchild = childindex(ps,ps.lastind)
 	@inbounds lic_dim = lastindchild[1]
@@ -188,7 +222,29 @@ _checknorollover(::Tuple{},::Tuple{},::Tuple{}) = true
 	iter[lic_dim]
 end
 
-@inline function Base.maximum(ps::ProductSplit{<:Any,N},dim::Int) where {N}
+"""
+	maximum(ps::ProductSplit; dim::Int)
+
+Compute the maximum value of the range number `dim` that is
+contained in `ps`.
+
+# Examples
+```jldoctest
+julia> ps = ProductSplit((1:2,4:5),2,1);
+
+julia> collect(ps)
+2-element Array{Tuple{Int64,Int64},1}:
+ (1, 4)
+ (2, 4)
+
+julia> maximum(ps,dim=1)
+2
+
+julia> maximum(ps,dim=2)
+4
+```
+"""
+@inline function Base.maximum(ps::ProductSplit{<:Any,N};dim::Int) where {N}
 
 	@boundscheck (1 <= dim <= N) || throw(BoundsError(ps.iterators,dim))
 
@@ -214,8 +270,7 @@ end
 	return v
 end
 
-@inline function Base.minimum(ps::ProductSplit{<:Any,1},dim::Int=1)
-	@boundscheck (dim > 1) && throw(BoundsError(ps.iterators,dim))
+@inline function Base.minimum(ps::ProductSplit{<:Any,1})
 	isempty(ps) && return nothing
 	firstindchild = childindex(ps,ps.firstind)
 	@inbounds fic_dim = firstindchild[1]
@@ -223,7 +278,29 @@ end
 	iter[fic_dim]
 end
 
-@inline function Base.minimum(ps::ProductSplit{<:Any,N},dim::Int) where {N}
+"""
+	minimum(ps::ProductSplit; dim::Int)
+
+Compute the minimum value of the range number `dim` that is
+contained in `ps`.
+
+# Examples
+```jldoctest
+julia> ps = ProductSplit((1:2,4:5),2,1);
+
+julia> collect(ps)
+2-element Array{Tuple{Int64,Int64},1}:
+ (1, 4)
+ (2, 4)
+
+julia> minimum(ps,dim=1)
+1
+
+julia> minimum(ps,dim=2)
+4
+```
+"""
+@inline function Base.minimum(ps::ProductSplit{<:Any,N};dim::Int) where {N}
 	
 	@boundscheck (1 <= dim <= N) || throw(BoundsError(ps.iterators,dim))
 
@@ -249,8 +326,7 @@ end
 	return v
 end
 
-@inline function Base.extrema(ps::ProductSplit{<:Any,1},dim::Int=1)
-	@boundscheck (dim > 1) && throw(BoundsError(ps.iterators,dim))
+@inline function Base.extrema(ps::ProductSplit{<:Any,1})
 	isempty(ps) && return nothing
 	firstindchild = childindex(ps,ps.firstind)
 	lastindchild = childindex(ps,ps.lastind)
@@ -261,7 +337,29 @@ end
 	(iter[fic_dim],iter[lic_dim])
 end
 
-@inline function Base.extrema(ps::ProductSplit{<:Any,N},dim::Int) where {N}
+"""
+	extrema(ps::ProductSplit; dim::Int)
+
+Compute the minimum and maximum of the range number `dim` that is
+contained in `ps`.
+
+# Examples
+```jldoctest
+julia> ps = ProductSplit((1:2,4:5),2,1);
+
+julia> collect(ps)
+2-element Array{Tuple{Int64,Int64},1}:
+ (1, 4)
+ (2, 4)
+
+julia> extrema(ps,dim=1)
+(1, 2)
+
+julia> extrema(ps,dim=2)
+(4, 4)
+```
+"""
+@inline function Base.extrema(ps::ProductSplit{<:Any,N};dim::Int) where {N}
 	
 	@boundscheck (1 <= dim <= N) || throw(BoundsError(ps.iterators,dim))
 
@@ -286,13 +384,59 @@ end
 	return v
 end
 
+"""
+	extremadims(ps::ProductSplit)
+
+Compute the extrema of all the ranges contained in `ps`.
+
+# Examples
+```jldoctest
+julia> ps = ProductSplit((1:2,4:5), 2, 1);
+
+julia> collect(ps)
+2-element Array{Tuple{Int64,Int64},1}:
+ (1, 4)
+ (2, 4)
+
+julia> extremadims(ps)
+((1, 2), (4, 4))
+```
+"""
 extremadims(ps::ProductSplit) = _extremadims(ps,1,ps.iterators)
 
 function _extremadims(ps::ProductSplit,dim::Int,iterators::Tuple)
-	(extrema(ps,dim),_extremadims(ps,dim+1,Base.tail(iterators))...)
+	(extrema(ps;dim=dim),_extremadims(ps,dim+1,Base.tail(iterators))...)
 end
 _extremadims(::ProductSplit,::Int,::Tuple{}) = ()
 
+"""
+	extrema_commonlastdim(ps::ProductSplit)
+
+Return the reverse-lexicographic extrema of values taken from 
+ranges contained in `ps`, where the pairs of ranges are constructed 
+by concatenating each dimension with the last one.
+
+For two ranges this simply returns ([first(ps)],[last(ps)]).
+
+# Examples
+```jldoctest
+julia> ps = ProductSplit((1:3,4:7,2:7),10,2);
+
+julia> collect(ps)
+8-element Array{Tuple{Int64,Int64,Int64},1}:
+ (3, 6, 2)
+ (1, 7, 2)
+ (2, 7, 2)
+ (3, 7, 2)
+ (1, 4, 3)
+ (2, 4, 3)
+ (3, 4, 3)
+ (1, 5, 3)
+
+julia> extrema_commonlastdim(ps)
+([(1, 2), (6, 2)], [(3, 3), (5, 3)])
+```
+"""
 function extrema_commonlastdim(ps::ProductSplit{<:Any,N}) where {N}
 
 	isempty(ps) && return nothing
@@ -349,18 +493,31 @@ function Base.in(val::T,ps::ProductSplit{T}) where {T}
 	first_iter <= val_lt <= last_iter
 end
 
-function evenlyscatterproduct(num_tasks::Integer,np,procid)
-    evenlyscatterproduct((1:num_tasks,),np,procid)
-end
+"""
+	whichproc(iterators::Tuple, val::Tuple, np::Integer )
 
-function evenlyscatterproduct(iterators::Tuple,np,procid)
-	ProductSplit(iterators,np,procid)
-end
+Return the processor rank that will contain `val` if the outer 
+product of the ranges contained in `iterators` is split evenly 
+across `np` processors.
 
-evenlyscatterproduct(itp::Iterators.ProductIterator,args...) = 
-	evenlyscatterproduct(itp.iterators,args...)
+# Examples
+```jldoctest
+julia> iters = (1:4, 2:3);
 
-function whichproc(iterators::Tuple,val::Tuple,np::Int)
+julia> np = 2;
+
+julia> ProductSplit(iters, np, 2) |> collect
+4-element Array{Tuple{Int64,Int64},1}:
+ (1, 3)
+ (2, 3)
+ (3, 3)
+ (4, 3)
+
+julia> whichproc(iters, (2,3), np)
+2
+``` 
+"""
+function whichproc(iterators, val, np::Integer)
 	
 	_infullrange(val,iterators) || return nothing
 
@@ -388,13 +545,33 @@ function whichproc(iterators::Tuple,val::Tuple,np::Int)
 	end
 end
 
-whichproc(iterators::Tuple,::Nothing,np::Int) = nothing
+whichproc(iterators, ::Nothing, np::Integer) = nothing
 
 # This function tells us the range of processors that would be involved
 # if we are to compute the tasks contained in the list ps on np_new processors.
 # The total list of tasks is contained in iterators, and might differ from 
 # ps.iterators (eg if ps contains a subsection of the parameter set)
-function procrange_recast(iterators::Tuple,ps::ProductSplit,np_new::Int)
+"""
+	procrange_recast(iterators::Tuple, ps::ProductSplit, np_new::Integer)
+
+Return the range of processor ranks that would contain the values in `ps` if 
+the outer produce of the ranges in `iterators` is split across `np_new` 
+workers.
+
+The values contained in `ps` should be a subsection of the outer product of 
+the ranges in `iterators`.
+
+# Examples
+```jldoctest
+julia> iters = (1:10,4:6,1:4);
+
+julia> ps = ProductSplit(iters, 5, 2);
+
+julia> procrange_recast(iters, ps, 10)
+3:4
+```
+"""
+function procrange_recast(iterators::Tuple, ps::ProductSplit, np_new::Integer)
 	
 	if isempty(ps)
 		return 0:-1 # empty range
@@ -416,8 +593,31 @@ function procrange_recast(iterators::Tuple,ps::ProductSplit,np_new::Int)
 	return procid_start:procid_end
 end
 
-procrange_recast(ps::ProductSplit,np_new::Int) = procrange_recast(ps.iterators,ps,np_new)
+function procrange_recast(ps::ProductSplit, np_new::Integer)
+	procrange_recast(ps.iterators,ps,np_new)
+end
 
+"""
+	localindex(ps::ProductSplit{T}, val::T) where {T}
+
+Return the index of `val` in `ps`. Return `nothing` if the value
+is not found.
+
+# Examples
+```jldoctest
+julia> ps = ProductSplit((1:3,4:5:20), 3, 2);
+
+julia> collect(ps)
+4-element Array{Tuple{Int64,Int64},1}:
+ (2, 9)
+ (3, 9)
+ (1, 14)
+ (2, 14)
+
+julia> localindex(ps,(3,9))
+2
+```
+"""
 function localindex(ps::ProductSplit{T},val::T) where {T}
 	# Can carry out a binary search
 
@@ -444,14 +644,38 @@ function localindex(ps::ProductSplit{T},val::T) where {T}
 	end
 end
 
-localindex(::ProductSplit,::Nothing) = nothing
+localindex(::ProductSplit, ::Nothing) = nothing
 
-function localindex(iterators::Tuple,val::Tuple,np::Integer,procid::Integer)
-	ps = evenlyscatterproduct(iterators,np,procid)
+function localindex(iterators::Tuple, val::Tuple, np::Integer,procid::Integer)
+	ps = ProductSplit(iterators,np,procid)
 	localindex(ps,val)
 end
 
-function procid_and_localindex(iterators::Tuple,val::Tuple,np::Integer)
+"""
+	whichproc_localindex(iterators::Tuple, val::Tuple, np::Integer)
+
+Return `(wrank,lind)`, where `wrank` is the
+rank of the worker that `val` will reside on if the outer product 
+of the ranges in `iterators` is spread over `np` workers, and `lind` is
+the index of `val` in the local section on that worker.
+
+# Examples
+```jldoctest
+julia> iters = (1:4,2:8);
+
+julia> np = 10;
+
+julia> whichproc_localindex(iters, (2,4), np)
+(4, 1)
+
+julia> ProductSplit(iters, np, 4) |> collect
+3-element Array{Tuple{Int64,Int64},1}:
+ (2, 4)
+ (3, 4)
+ (4, 4)
+```
+"""
+function whichproc_localindex(iterators::Tuple, val::Tuple, np::Integer)
 	procid = whichproc(iterators,val,np)
 	index = localindex(iterators,val,np,procid)
 	return procid,index

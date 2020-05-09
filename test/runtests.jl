@@ -12,7 +12,7 @@ addprocs(workersused)
     import ParallelUtilities: BinaryTreeNode, RemoteChannelContainer, BranchChannel, 
 	Sorted, Unsorted, Ordering, pval, value, reducedvalue, reduceTreeNode, mapTreeNode,
     SequentialBinaryTree, OrderedBinaryTree, BinaryTreeError, parentnoderank, nchildren,
-    maybepvalput!, createbranchchannels
+    maybepvalput!, createbranchchannels, nworkersactive, workersactive
 end
 
 @testset "ProductSplit" begin
@@ -20,7 +20,7 @@ end
 	various_iters = [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6),
 		    	(1:2,Base.OneTo(4),1:3:10)]
 
-	function split_across_processors_iterators(arr::Base.Iterators.ProductIterator,num_procs,proc_id)
+	function split_across_processors_iterators(arr::Iterators.ProductIterator,num_procs,proc_id)
 
 	    num_tasks = length(arr);
 
@@ -39,7 +39,7 @@ end
     @testset "Constructor" begin
 
 	    function checkPSconstructor(iters,npmax=10)
-	    	ntasks_total = prod(map(length,iters))
+	    	ntasks_total = prod(length.(iters))
 			for np = 1:npmax, p = 1:np
 		        ps = ProductSplit(iters,np,p)
 		        @test collect(ps) == collect(split_product_across_processors_iterators(iters,np,p))
@@ -171,7 +171,7 @@ end
 			        pcol = collect(ps)
 			        for dim in 1:length(iters)
 			        	@test begin
-			        		res = fn(ps,dim) == fn(x[dim] for x in pcol)
+			        		res = fn(ps,dim=dim) == fn(x[dim] for x in pcol)
 			        		if !res
 			        			println("ProductSplit(",iters,",",np,",",p,")")
 			        		end
@@ -239,17 +239,6 @@ end
 	    end
 
 	    @test ParallelUtilities._infullrange((),())
-    end
-
-    @testset "evenlyscatterproduct" begin
-        n = 10
-        np,proc_id = 5,3
-        @test evenlyscatterproduct(n,np,proc_id) == ProductSplit((1:n,),np,proc_id)
-        for iters in various_iters
-        	@test evenlyscatterproduct(iters,np,proc_id) == ProductSplit(iters,np,proc_id)
-        	itp = Iterators.product(iters...)
-        	@test evenlyscatterproduct(itp,np,proc_id) == ProductSplit(iters,np,proc_id)
-        end
     end
 
     @testset "whichproc + procrange_recast" begin
@@ -332,13 +321,13 @@ end
 	    end
     end
 
-    @testset "procid_and_localindex" begin
+    @testset "whichproc_localindex" begin
         for iters in various_iters
 	        for np=1:ntasks(iters),proc_id=1:np
 	        	ps_col = collect(ProductSplit(iters,np,proc_id))
 	        	ps_col_rev = [reverse(t) for t in ps_col] 
 	        	for val in ps_col
-	        		p,ind = procid_and_localindex(iters,val,np)
+	        		p,ind = whichproc_localindex(iters,val,np)
 	        		@test p == proc_id
 	        		ind_in_arr = searchsortedfirst(ps_col_rev,reverse(val))
 	        		@test ind == ind_in_arr
@@ -420,10 +409,6 @@ end
         @test nworkersactive(ps) == min(10,nworkers())
 
         iters = (1:1,1:2)
-        itp = Iterators.product(iters...)
-        @test nworkersactive(itp) == nworkersactive(iters)
-        @test workersactive(itp) == workersactive(iters)
-
         ps = ProductSplit(iters,2,1)
         @test nworkersactive(ps) == nworkersactive(iters)
         @test workersactive(ps) == workersactive(iters)
@@ -1224,12 +1209,7 @@ end
 			    iterable = 1:2nworkers()
 			    res = pmapbatch(identity,iterable)
 			    resexp = [ProductSplit((iterable,),nworkersactive(iterable),p) for p=1:nworkersactive(iterable)]
-				@test res == resexp
-			    
-			    iterable = 1:2nworkers()
-			    res = pmapbatch(identity,Iterators.product(iterable))
-			    resexp = [ProductSplit((iterable,),nworkersactive(iterable),p) for p=1:nworkersactive(iterable)]
-				@test res == resexp
+				@test res == resexp			    
 			end
 
 			@testset "errors" begin
@@ -1242,6 +1222,9 @@ end
 			    iterable = 1:nworkers()
 			    res = pmapbatch_elementwise(identity,iterable)
 			    @test res == iterable
+
+                res = pmapbatch_elementwise(identity,iterable,num_workers=1)
+                @test res == iterable
 
 				iterable = 1:20
 			    res = pmapbatch_elementwise(x->x^2,iterable)
@@ -1272,19 +1255,14 @@ end
                 end
 			    @test pmapsum(x->x[1][1],Int,(1:nworkers(),)) == res_exp
                 @test pmapsum(x->x[1][1],(1:nworkers(),)) == res_exp
-			    @test pmapsum(x->x[1][1],Int,Iterators.product(1:nworkers())) == res_exp
-                @test pmapsum(x->x[1][1],Iterators.product(1:nworkers())) == res_exp
                 @test pmapsum(x->x[1][1],Int,(1:nworkers(),1:1)) == res_exp
 			    @test pmapsum(x->x[1][1],(1:nworkers(),1:1)) == res_exp
-			    @test pmapsum(x->x[1][1],Int,Iterators.product(1:nworkers(),1:1)) == res_exp
-                @test pmapsum(x->x[1][1],Iterators.product(1:nworkers(),1:1)) == res_exp
 			    @test pmapsum(x->myid(),1:nworkers()) == sum(workers())
 		    end
 		    
 		    @testset "one iterator" begin
 			    rng = 1:100
 			    @test pmapsum(x->sum(y[1] for y in x),rng) == sum(rng)
-			    @test pmapsum(x->sum(y[1] for y in x),Iterators.product(rng)) == sum(rng)
 			    @test pmapsum(x->sum(y[1] for y in x),(rng,)) == sum(rng)
 		    end
 
@@ -1326,13 +1304,9 @@ end
                     res = pmapsum_elementwise(identity,iterable,showprogress=true)
                     @test res == sum(iterable) 
                 end
-                res = pmapsum_elementwise(identity,Iterators.product(iterable))
-                @test res == sum(iterable)
                 res = pmapsum_elementwise(identity,(iterable,))
                 @test res == sum(iterable)
 			    res = pmapsum_elementwise(identity,Int,iterable)
-			    @test res == sum(iterable)
-			    res = pmapsum_elementwise(identity,Int,Iterators.product(iterable))
 			    @test res == sum(iterable)
 			    res = pmapsum_elementwise(identity,Int,(iterable,))
 			    @test res == sum(iterable)
@@ -1381,20 +1355,14 @@ end
                 end
                 @test pmapreduce_commutative(x->myid(),Int,sum,Int,(1:nworkers(),)) == res_exp
 			    @test pmapreduce_commutative(x->myid(),sum,(1:nworkers(),)) == res_exp
-                @test pmapreduce_commutative(x->myid(),Int,sum,Int,Iterators.product(1:nworkers())) == res_exp
-			    @test pmapreduce_commutative(x->myid(),sum,Iterators.product(1:nworkers())) == res_exp
 			    @test pmapreduce_commutative(x->myid(),Int,sum,Int,(1:nworkers(),1:1)) == res_exp
                 @test pmapreduce_commutative(x->myid(),sum,(1:nworkers(),1:1)) == res_exp
-                @test pmapreduce_commutative(x->myid(),Int,sum,Int,Iterators.product(1:nworkers(),1:1)) == res_exp
-			    @test pmapreduce_commutative(x->myid(),sum,Iterators.product(1:nworkers(),1:1)) == res_exp
 			    @test pmapreduce_commutative(x->myid(),sum,1:nworkers()) == pmapsum(x->myid(),1:nworkers())
 		    end
 		    @testset "prod" begin
 			    @test pmapreduce_commutative(x->myid(),prod,1:nworkers()) == prod(workers())
 			    @test pmapreduce_commutative(x->myid(),prod,(1:nworkers(),)) == prod(workers())
-			    @test pmapreduce_commutative(x->myid(),prod,Iterators.product(1:nworkers())) == prod(workers())
 			    @test pmapreduce_commutative(x->myid(),prod,(1:nworkers(),1:1)) == prod(workers())
-			    @test pmapreduce_commutative(x->myid(),prod,Iterators.product(1:nworkers(),1:1)) == prod(workers())
 		    end
 
 		    @testset "run elsewhere" begin
@@ -1436,13 +1404,9 @@ end
 			    @test res == pmapsum(plist->sum(x[1]^2 for x in plist),iter)
 			    res = pmapreduce_commutative_elementwise(x->x^2,sum,(iter,))
 			    @test res == res_exp
-			    res = pmapreduce_commutative_elementwise(x->x^2,sum,Iterators.product(iter))
-			    @test res == res_exp
                 res = pmapreduce_commutative_elementwise(x->x^2,Int,sum,Int,(iter,))
                 @test res == res_exp
                 res = pmapreduce_commutative_elementwise(x->x^2,Int,sum,Int,iter)
-                @test res == res_exp
-                res = pmapreduce_commutative_elementwise(x->x^2,Int,sum,Int,Iterators.product(iter))
                 @test res == res_exp
                 res = pmapreduce_commutative_elementwise(x->x^2,Int,x->float(sum(x)),Float64,iter)
                 @test res == float(res_exp)
@@ -1485,12 +1449,8 @@ end
                 end
 			    @test pmapreduce(x->myid(),Int,sum,Int,(1:nworkers(),)) == res_exp
 			    @test pmapreduce(x->myid(),sum,(1:nworkers(),)) == res_exp
-                @test pmapreduce(x->myid(),Int,sum,Int,Iterators.product(1:nworkers())) == res_exp
-			    @test pmapreduce(x->myid(),sum,Iterators.product(1:nworkers())) == res_exp
                 @test pmapreduce(x->myid(),Int,sum,Int,(1:nworkers(),1:1)) == res_exp
 			    @test pmapreduce(x->myid(),sum,(1:nworkers(),1:1)) == res_exp
-                @test pmapreduce(x->myid(),Int,sum,Int,Iterators.product(1:nworkers(),1:1)) == res_exp
-			    @test pmapreduce(x->myid(),sum,Iterators.product(1:nworkers(),1:1)) == res_exp
 
                 @testset "comparison with pmapsum" begin
                     res_exp = pmapsum(x->myid(),1:nworkers())

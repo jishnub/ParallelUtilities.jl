@@ -1,26 +1,47 @@
+"""
+	nworkersactive(iterators::Tuple)
+
+Number of workers required to contain the outer product of the iterators.
+"""
 @inline function nworkersactive(iterators::Tuple)
-	nt = ntasks(iterators)
-	nw = nworkers()
-	nt <= nw ? nt : nw
+	min(nworkers(), ntasks(iterators))
 end
 @inline nworkersactive(ps::ProductSplit) = nworkersactive(ps.iterators)
-@inline nworkersactive(itp::Iterators.ProductIterator) = nworkersactive(itp.iterators)
-@inline nworkersactive(args...) = nworkersactive(args)
+@inline nworkersactive(args::AbstractRange...) = nworkersactive(args)
+
+"""
+	workersactive(iterators::Tuple)
+
+Workers required to split the outer product of the iterators. 
+If `ntasks(iterators) < nworkers()` then the first `ntasks(iterators)`
+workers are chosen.
+"""
 @inline workersactive(iterators::Tuple) = workers()[1:nworkersactive(iterators)]
 @inline workersactive(ps::ProductSplit) = workersactive(ps.iterators)
-@inline workersactive(itp::Iterators.ProductIterator) = workersactive(itp.iterators)
-@inline workersactive(args...) = workersactive(args)
+@inline workersactive(args::AbstractRange...) = workersactive(args)
 
-function gethostnames(procs_used = workers())
-	hostnames = Vector{String}(undef,length(procs_used))
-	@sync for (ind,p) in enumerate(procs_used)
+"""
+	gethostnames(procs = workers())
+
+Return the hostname of each worker in `procs`. This is obtained by evaluating 
+`Libc.gethostname()` on each worker.
+"""
+function gethostnames(procs = workers())
+	hostnames = Vector{String}(undef,length(procs))
+	@sync for (ind,p) in enumerate(procs)
 		@async hostnames[ind] = @fetchfrom p Libc.gethostname()
 	end
 	return hostnames
 end
 
+"""
+	nodenames(procs = workers())
+
+Return the unique hostnames that the workers in `procs` lie on. 
+On an HPC system these are usually the hostnames of the nodes involved.
+"""
+nodenames(procs = workers()) = nodenames(gethostnames(procs))
 nodenames(hostnames::Vector{String}) = unique(hostnames)
-nodenames(procs_used::Vector{<:Integer} = workers()) = nodenames(gethostnames(procs_used))
 
 function nprocs_node(hostnames::Vector{String})
 	nodes = nodenames(hostnames)
@@ -31,4 +52,12 @@ function nprocs_node(hostnames::Vector{String},nodes::Vector{String})
 	Dict(node=>count(isequal(node),hostnames) for node in nodes)
 end
 
-nprocs_node(procs_used::Vector{<:Integer} = workers()) = nprocs_node(gethostnames(procs_used))
+"""
+	nprocs_node(procs = workers())
+
+Return the number of workers on each host.
+On an HPC system this would return the number of workers on each node.
+"""
+function nprocs_node(procs = workers())
+	nprocs_node(gethostnames(procs))
+end

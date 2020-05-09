@@ -5,16 +5,13 @@ using Reexport
 @reexport using Distributed
 
 export  ProductSplit,
-	evenlyscatterproduct,
 	ntasks,
 	whichproc,
 	procrange_recast,
 	localindex,
-	procid_and_localindex,
+	whichproc_localindex,
 	extremadims,
 	extrema_commonlastdim,
-	workersactive,
-	nworkersactive,
 	nodenames,
 	gethostnames,
 	nprocs_node,
