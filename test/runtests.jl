@@ -1,6 +1,7 @@
 using ParallelUtilities
 using Test
 using Distributed
+using DataStructures
 
 const workersused = 8
 addprocs(workersused)
@@ -11,9 +12,21 @@ addprocs(workersused)
     using ParallelUtilities
     import ParallelUtilities: BinaryTreeNode, RemoteChannelContainer, BranchChannel, 
 	Sorted, Unsorted, Ordering, pval, value, reducedvalue, reduceTreeNode, mapTreeNode,
-    SequentialBinaryTree, OrderedBinaryTree, BinaryTreeError, parentnoderank, nchildren,
-    maybepvalput!, createbranchchannels, nworkersactive, workersactive
+    SequentialBinaryTree, OrderedBinaryTree, SegmentedSequentialBinaryTree,
+    parentnoderank, nchildren,
+    maybepvalput!, createbranchchannels, nworkersactive, workersactive,
+    procs_node
 end
+
+macro testsetwithinfo(str,ex)
+    quote
+        @info "Testing "*$str
+        @testset $str begin $(esc(ex)); end;
+    end
+end
+
+# Wrap a testset around this to get the result at the end
+@testset "ParallelUtilities" begin
 
 @testset "ProductSplit" begin
 
@@ -364,7 +377,7 @@ end
             end
         end
     end
-end
+end;
 
 @testset "ReverseLexicographicTuple" begin
     @testset "isless" begin
@@ -392,7 +405,7 @@ end
         @test isequal(a,b)
         @test a <= b
     end
-end
+end;
 
 @testset "utilities" begin
     @testset "workers active" begin
@@ -401,8 +414,8 @@ end
         @test nworkersactive((1:1,1:2)) == min(2,nworkers())
         @test nworkersactive(1:2) == min(2,nworkers())
         @test nworkersactive(1:1,1:2) == min(2,nworkers())
-        @test nworkersactive((1:nworkers()+1,)) == workersused
-        @test nworkersactive(1:nworkers()+1) == workersused
+        @test nworkersactive((1:nworkers()+1,)) == nworkers()
+        @test nworkersactive(1:nworkers()+1) == nworkers()
     	@test workersactive((1:1,)) == workers()[1:1]
     	@test workersactive(1:1) == workers()[1:1]
     	@test workersactive(1:1,1:1) == workers()[1:1]
@@ -427,12 +440,23 @@ end
         @test hostnames == [@fetchfrom p Libc.gethostname() for p in workers()]
         @test nodenames() == nodes
         @test nodenames(hostnames) == nodes
-        npnodes = Dict(hostnames[1]=>nworkers())
-        @test nprocs_node(hostnames,nodes) == npnodes
-        @test nprocs_node(hostnames) == npnodes
-        @test nprocs_node() == npnodes
+        np1 = nprocs_node(hostnames,nodes)
+        np2 = nprocs_node(hostnames)
+        np3 = nprocs_node()
+        @test np1 == np2 == np3
+        for node in nodes
+            npnode = count(isequal(node),hostnames)
+            @test np1[node] == npnode
+        end
+        p1 = procs_node()
+        p2 = procs_node(workers(),hostnames,nodes)
+        @test p1 == p2
+        for node in nodes
+            pnode = workers()[findall(isequal(node),hostnames)]
+            @test p1[node] == pnode
+        end
     end
-end
+end;
 
 @testset "BinaryTree" begin
     @testset "BinaryTreeNode" begin
@@ -445,13 +469,13 @@ end
 	        b = BinaryTreeNode(p,p,2)
 	        @test nchildren(b) == 2
 
-	        @test_throws BinaryTreeError BinaryTreeNode(p,p,3)
-            @test_throws BinaryTreeError BinaryTreeNode(p,p,-1)
+	        @test_throws DomainError BinaryTreeNode(p,p,3)
+            @test_throws DomainError BinaryTreeNode(p,p,-1)
     	end
     end
 
-    @testset "BinaryTree" begin
-        @testset "SequentialBinaryTree" begin
+    @testsetwithinfo "BinaryTree" begin
+        @testsetwithinfo "SequentialBinaryTree" begin
             @testset "pid and parent" begin
                 for imax = 1:100
                     procs = 1:imax
@@ -459,6 +483,7 @@ end
                     @test length(tree) == length(procs) 
                     topnoderank = ParallelUtilities.topnoderank(tree)
                     @test topnoderank == 1
+                    @test tree[topnoderank] == ParallelUtilities.topnode(tree)
                     @test tree[1].parent == 1
                     for rank in 1:length(tree)
                         node = tree[rank]
@@ -478,14 +503,12 @@ end
                 @test nchildren(tree,1) == nchildren(tree[1]) == tree[1].nchildren == 0
                 @test_throws BoundsError(tree,0) nchildren(tree,0)
                 @test_throws BoundsError(tree,2) nchildren(tree,2)
-                @test ParallelUtilities.topnoderank(tree) == 1
 
                 tree = SequentialBinaryTree(1:2)
                 @test nchildren(tree,1) == nchildren(tree[1]) == tree[1].nchildren == 1
                 @test nchildren(tree,2) == nchildren(tree[2]) == tree[2].nchildren == 0
                 @test_throws BoundsError(tree,0) nchildren(tree,0)
                 @test_throws BoundsError(tree,3) nchildren(tree,3)
-                @test ParallelUtilities.topnoderank(tree) == 1
 
                 tree = SequentialBinaryTree(1:8)
                 @test nchildren(tree,1) == nchildren(tree[1]) == tree[1].nchildren == 2
@@ -498,7 +521,6 @@ end
                 @test nchildren(tree,8) == nchildren(tree[8]) == tree[8].nchildren == 0
                 @test_throws BoundsError(tree,0) nchildren(tree,0)
                 @test_throws BoundsError(tree,9) nchildren(tree,9)
-                @test ParallelUtilities.topnoderank(tree) == 1
             end
 
             @testset "level" begin
@@ -524,7 +546,8 @@ end
                 @test summary(tree) == strexp
             end
         end
-        @testset "OrderedBinaryTree" begin
+
+        @testsetwithinfo "OrderedBinaryTree" begin
             @testset "pid and parent" begin
                 for imax = 1:100
                     procs = 1:imax
@@ -628,6 +651,159 @@ end
                 end
             end
         end
+
+        @testsetwithinfo "SegmentedSequentialBinaryTree" begin
+            @testsetwithinfo "single host" begin
+                @testset "pid and parent" begin
+                    for imax = 1:100
+                        procs = 1:imax
+                        workersonnodes = Dict("host"=>procs)
+                        tree = SegmentedSequentialBinaryTree(procs,workersonnodes)
+                        treeSBT = SequentialBinaryTree(procs)
+                        @test length(tree) == length(procs) == length(treeSBT)
+
+                        topnoderank = ParallelUtilities.topnoderank(tree)
+                        @test topnoderank == 1
+                        @test tree[topnoderank] == ParallelUtilities.topnode(tree)
+                        @test tree[1].parent == 1
+                        for rank in 1:length(tree)
+                            node = tree[rank]
+                            parentnode = tree[parentnoderank(tree,rank)]
+                            @test node.p == procs[rank]
+                            @test node.parent == procs[parentnoderank(treeSBT,rank)]
+                            @test parentnode.p == node.parent
+                        end
+                    end
+                end;
+
+                @testset "nchildren" begin
+                    procs = 1:1
+                    tree = SegmentedSequentialBinaryTree(procs,Dict("host"=>procs))
+                    @test nchildren(tree,1) == nchildren(tree[1]) == tree[1].nchildren == 0
+                    @test_throws BoundsError(tree,0) nchildren(tree,0)
+                    @test_throws BoundsError(tree,2) nchildren(tree,2)
+
+                    procs = 1:2
+                    tree = SegmentedSequentialBinaryTree(procs,Dict("host"=>procs))
+                    @test nchildren(tree,1) == nchildren(tree[1]) == tree[1].nchildren == 1
+                    @test nchildren(tree,2) == nchildren(tree[2]) == tree[2].nchildren == 0
+                    @test_throws BoundsError(tree,0) nchildren(tree,0)
+                    @test_throws BoundsError(tree,3) nchildren(tree,3)
+
+                    procs = 1:8
+                    tree = SegmentedSequentialBinaryTree(procs,Dict("host"=>procs))
+                    @test nchildren(tree,1) == nchildren(tree[1]) == tree[1].nchildren == 2
+                    @test nchildren(tree,2) == nchildren(tree[2]) == tree[2].nchildren == 2
+                    @test nchildren(tree,3) == nchildren(tree[3]) == tree[3].nchildren == 2
+                    @test nchildren(tree,4) == nchildren(tree[4]) == tree[4].nchildren == 1
+                    @test nchildren(tree,5) == nchildren(tree[5]) == tree[5].nchildren == 0
+                    @test nchildren(tree,6) == nchildren(tree[6]) == tree[6].nchildren == 0
+                    @test nchildren(tree,7) == nchildren(tree[7]) == tree[7].nchildren == 0
+                    @test nchildren(tree,8) == nchildren(tree[8]) == tree[8].nchildren == 0
+                    @test_throws BoundsError(tree,0) nchildren(tree,0)
+                    @test_throws BoundsError(tree,9) nchildren(tree,9)
+                end;
+            end;
+
+            @testsetwithinfo "multiple hosts" begin
+                @testset "length" begin
+                    procs = 1:2
+                    tree = SegmentedSequentialBinaryTree(procs,
+                        OrderedDict("host1"=>1:1,"host2"=>2:2))
+                    @test length(tree) == 2 + 1
+
+                    procs = 1:4
+                    tree = SegmentedSequentialBinaryTree(procs,
+                        OrderedDict("host1"=>1:2,"host2"=>3:4))
+
+                    @test length(tree) == 4 + 1
+
+                    procs = 1:12
+                    tree = SegmentedSequentialBinaryTree(procs,
+                        OrderedDict(
+                            "host1"=>1:3,"host2"=>4:6,
+                            "host3"=>7:9,"host4"=>10:12))
+
+                    @test length(tree) == 12 + 3 
+                end;
+
+                @testset "pid and parent" begin
+                    for imax = 2:100
+                        procs = 1:imax
+                        mid = div(imax,2)
+                        workersonnodes = OrderedDict{String,Vector{Int}}()
+                        workersonnodes["host1"] = procs[1:mid]
+                        workersonnodes["host2"] = procs[mid+1:end]
+                        tree = SegmentedSequentialBinaryTree(procs,workersonnodes)
+
+                        topnoderank = ParallelUtilities.topnoderank(tree)
+                        @test topnoderank == 1
+                        @test tree[topnoderank] == ParallelUtilities.topnode(tree)
+                        @test tree[1].parent == 1
+                        for (ind,rank) in enumerate(1:mid)
+                            node = tree[rank+1]
+                            parentnode = tree[parentnoderank(tree,rank+1)]
+                            @test parentnode.p == node.parent
+                            pnodes = workersonnodes["host1"]
+                            @test node.p == pnodes[ind]
+                            SBT = SequentialBinaryTree(pnodes)
+                            if ind == 1
+                                @test node.parent == 1
+                            else
+                                @test node.parent == pnodes[parentnoderank(SBT,ind)]
+                            end
+                        end
+                        for (ind,rank) in enumerate(mid+1:imax)
+                            node = tree[rank+1]
+                            parentnode = tree[parentnoderank(tree,rank+1)]
+                            @test parentnode.p == node.parent
+                            pnodes = workersonnodes["host2"]
+                            @test node.p == pnodes[ind]
+                            SBT = SequentialBinaryTree(pnodes)
+                            if ind == 1
+                                @test node.parent == 1
+                            else
+                                @test node.parent == pnodes[parentnoderank(SBT,ind)]
+                            end
+                        end
+                    end
+                end;
+
+                @testset "nchildren" begin
+                    procs = 1:2
+                    tree = SegmentedSequentialBinaryTree(procs,
+                        OrderedDict("host1"=>1:1,"host2"=>2:2))
+                    @test nchildren(tree,1) == nchildren(tree[1]) == tree[1].nchildren == 2
+                    @test nchildren(tree,2) == nchildren(tree[2]) == tree[2].nchildren == 0
+                    @test nchildren(tree,3) == nchildren(tree[3]) == tree[3].nchildren == 0
+                    @test_throws BoundsError(tree,0) nchildren(tree,0)
+                    @test_throws BoundsError(tree,4) nchildren(tree,4)
+
+                    procs = 1:12
+                    tree = SegmentedSequentialBinaryTree(procs,
+                        OrderedDict(
+                            "host1"=>1:3,"host2"=>4:6,
+                            "host3"=>7:9,"host4"=>10:12))
+                    @test nchildren(tree,1) == nchildren(tree[1]) == tree[1].nchildren == 2
+                    @test nchildren(tree,2) == nchildren(tree[2]) == tree[2].nchildren == 2
+                    @test nchildren(tree,3) == nchildren(tree[3]) == tree[3].nchildren == 2
+                    @test nchildren(tree,4) == nchildren(tree[4]) == tree[4].nchildren == 2
+                    @test nchildren(tree,5) == nchildren(tree[5]) == tree[5].nchildren == 0
+                    @test nchildren(tree,6) == nchildren(tree[6]) == tree[6].nchildren == 0
+                    @test nchildren(tree,7) == nchildren(tree[7]) == tree[7].nchildren == 2
+                    @test nchildren(tree,8) == nchildren(tree[8]) == tree[8].nchildren == 0
+                    @test nchildren(tree,9) == nchildren(tree[9]) == tree[9].nchildren == 0
+                    @test nchildren(tree,10) == nchildren(tree[10]) == tree[10].nchildren == 2
+                    @test nchildren(tree,11) == nchildren(tree[11]) == tree[11].nchildren == 0
+                    @test nchildren(tree,12) == nchildren(tree[12]) == tree[12].nchildren == 0
+                    @test nchildren(tree,13) == nchildren(tree[13]) == tree[13].nchildren == 2
+                    @test nchildren(tree,14) == nchildren(tree[14]) == tree[14].nchildren == 0
+                    @test nchildren(tree,15) == nchildren(tree[15]) == tree[15].nchildren == 0
+                    @test_throws BoundsError(tree,0) nchildren(tree,0)
+                    @test_throws BoundsError(tree,16) nchildren(tree,16)
+                end;
+            end;
+        end
     end
     
     @testset "RemoteChannelContainer" begin
@@ -727,7 +903,7 @@ end
     	        	@test b.childrenchannels == rc_children
                     @test nchildren(b) == b.nchildren == n
     	        end
-    	        @test_throws ParallelUtilities.BinaryTreeError BranchChannel(1,rc_self,rc_parent,rc_children,3)
+    	        @test_throws ParallelUtilities.DomainError BranchChannel(1,rc_self,rc_parent,rc_children,3)
 	    	end
 
 	    	@testset "only parent channels supplied" begin
@@ -745,7 +921,7 @@ end
     	        	@test b.childrenchannels.err.where == b.p
                     @test nchildren(b) == b.nchildren == n
     	        end
-	        	@test_throws ParallelUtilities.BinaryTreeError BranchChannel(1,Int,rc_parent,3)
+	        	@test_throws ParallelUtilities.DomainError BranchChannel(1,Int,rc_parent,3)
 	    	end
 
 	    	@testset "no channels supplied" begin
@@ -767,12 +943,9 @@ end
 	    	    for n=0:2
     	        	b = BranchChannel{Int,Int}(p,n)
     	        	testbranchchannel(b,p,n)
-
-    	        	b = BranchChannel{Int,Int}(n)
-    	        	testbranchchannel(b,myid(),n)
     	        end
-	        	@test_throws ParallelUtilities.BinaryTreeError BranchChannel{Int,Int}(1,3)
-	        	@test_throws ParallelUtilities.BinaryTreeError BranchChannel{Int,Int}(3)
+	        	@test_throws ParallelUtilities.DomainError BranchChannel{Int,Int}(1,3)
+                @test_throws ParallelUtilities.DomainError BranchChannel{Int,Int}(1,-1)
 	    	end
 	    end
 
@@ -837,16 +1010,13 @@ end
     	        	@test branch.childrenchannels.err.where == p
     	        	@test branch.parentchannels.out.where == p_parent
     	        	@test branch.parentchannels.err.where == p_parent
-    	        	@test eltype(typeof(branch.parentchannels.out).parameters[1]) == T
-    	        	@test eltype(typeof(branch.parentchannels.err).parameters[1]) == Bool
-    	        	@test eltype(typeof(branch.selfchannels.out).parameters[1]) == T
-    	        	@test eltype(typeof(branch.selfchannels.err).parameters[1]) == Bool
-    	        	@test eltype(typeof(branch.childrenchannels.out).parameters[1]) == T
-    	        	@test eltype(typeof(branch.childrenchannels.err).parameters[1]) == Bool
     	        end
     	    end
 	        
-	        for TreeType in [SequentialBinaryTree,OrderedBinaryTree]
+	        for TreeType in [SequentialBinaryTree,
+                OrderedBinaryTree,
+                SegmentedSequentialBinaryTree]
+
                 tree = TreeType(workers())
                 for T in [Int,Any,Bool,Vector{Float64},Array{ComplexF64,2}]
                     testbranches(T,tree)
@@ -854,17 +1024,24 @@ end
 	        end
 
 	        iterators = (1:nworkers()+1,)
-	        tree,branches = ParallelUtilities.createbranchchannels(iterators,SequentialBinaryTree)
+	        tree,branches = createbranchchannels(iterators,SequentialBinaryTree)
 	        @test eltype(first(branches).parentchannels) == Any
-            tree,branches = ParallelUtilities.createbranchchannels(iterators,OrderedBinaryTree)
+            tree,branches = createbranchchannels(iterators,SegmentedSequentialBinaryTree)
             @test eltype(first(branches).parentchannels) == Any
-            tree,branches = ParallelUtilities.createbranchchannels(Int,Int,iterators,SequentialBinaryTree)
+            tree,branches = createbranchchannels(iterators,OrderedBinaryTree)
+            @test eltype(first(branches).parentchannels) == Any
+            tree,branches = createbranchchannels(Int,Int,iterators,SequentialBinaryTree)
             @test eltype(first(branches).parentchannels) == Int
-	        tree,branches = ParallelUtilities.createbranchchannels(Int,Int,iterators,OrderedBinaryTree)
+            tree,branches = createbranchchannels(Int,Int,iterators,SegmentedSequentialBinaryTree)
+            @test eltype(first(branches).parentchannels) == Int
+	        tree,branches = createbranchchannels(Int,Int,iterators,OrderedBinaryTree)
 	        @test eltype(first(branches).parentchannels) == Int
 
             # Make sure that all branches are defined
-            for T in [SequentialBinaryTree,OrderedBinaryTree]
+            for T in [SequentialBinaryTree,
+                OrderedBinaryTree,
+                SegmentedSequentialBinaryTree]
+
                 for nmax = 1:nworkers()
                     iterators = (1:nmax,)
                     tree,branches = createbranchchannels(iterators,T)
@@ -875,7 +1052,7 @@ end
             end
 	    end
 	end
-end
+end;
 
 @testset "pmap and reduce" begin
 
@@ -887,7 +1064,7 @@ end
 	@testset "Sorted and Unsorted" begin
 	    @test Sorted() isa Ordering
 	    @test Unsorted() isa Ordering
-	end
+	end;
 
 	@testset "pval" begin
 		p = pval(2,3)
@@ -897,29 +1074,29 @@ end
 
         @test convert(pval{Any},p) == pval{Any}(2,3)
         @test convert(pval{Float64},p) == pval{Any}(2,3.0)
-	end
+	end;
 
 	@testset "mapTreeNode" begin
 
 		@testset "maybepvalput!" begin
-		    pipe = BranchChannel{Int,Int}(0)
+		    pipe = BranchChannel{Int,Int}(myid(),0)
             rank = 1
 		    maybepvalput!(pipe,rank,0)
 		    @test isready(pipe.selfchannels.out)
 		    @test take!(pipe.selfchannels.out) == 0
 
-		    pipe = BranchChannel{pval,pval}(0)
+		    pipe = BranchChannel{pval,pval}(myid(),0)
 		    maybepvalput!(pipe,rank,0)
 		    @test isready(pipe.selfchannels.out)
 		    @test take!(pipe.selfchannels.out) == pval(rank,0)
 
-            pipe = BranchChannel{pval{Int},pval{Int}}(0)
+            pipe = BranchChannel{pval{Int},pval{Int}}(myid(),0)
             maybepvalput!(pipe,rank,0)
             @test isready(pipe.selfchannels.out)
             @test take!(pipe.selfchannels.out) == pval(rank,0)
 
             T = Vector{ComplexF64}
-            pipe = BranchChannel{pval{T},pval{T}}(1)
+            pipe = BranchChannel{pval{T},pval{T}}(myid(),1)
 
             val = ones(1).*im
             maybepvalput!(pipe,rank,val)
@@ -932,7 +1109,7 @@ end
             @test take!(pipe.selfchannels.out) == pval(rank,ComplexF64[1])
 
             T = Vector{Float64}
-            pipe = BranchChannel{pval{T},pval{T}}(1)
+            pipe = BranchChannel{pval{T},pval{T}}(myid(),1)
 
             val = ones(1)
             maybepvalput!(pipe,rank,val)
@@ -944,7 +1121,7 @@ end
             @test isready(pipe.selfchannels.out)
             @test take!(pipe.selfchannels.out) == pval(rank,Float64[1])
 
-            pipe = BranchChannel{pval,pval}(1)
+            pipe = BranchChannel{pval,pval}(myid(),1)
 
             val = ones(1)
             maybepvalput!(pipe,rank,val)
@@ -986,7 +1163,7 @@ end
 		@testset "range" begin
 	 		iterator = 1:10
 			
-			pipe = BranchChannel{Int,Int}(0)
+			pipe = BranchChannel{Int,Int}(myid(),0)
 			test_on_pipe(sum,iterator,pipe,sum(iterator))
 		end
 		
@@ -994,23 +1171,24 @@ end
 			iterators = (1:10,)
 			ps = ProductSplit(iterators,1,1)
 
-			pipe = BranchChannel{Int,Int}(0)
+			pipe = BranchChannel{Int,Int}(myid(),0)
 			test_on_pipe(x->sum(y[1] for y in x),ps,pipe,sum(iterators[1]))
 
-			pipe = BranchChannel{Int,Int}(1)
+			pipe = BranchChannel{Int,Int}(myid(),1)
 			test_on_pipe(x->sum(y[1] for y in x),ps,pipe,sum(iterators[1]))
 
-			pipe = BranchChannel{Int,Int}(2)
+			pipe = BranchChannel{Int,Int}(myid(),2)
 			test_on_pipe(x->sum(y[1] for y in x),ps,pipe,sum(iterators[1]))
 		end
 
         @testset "progress" begin
-            @test isnothing(ParallelUtilities.indicatemapprogress!(nothing))
-            progress = RemoteChannel(()->Channel{Tuple{Bool,Bool}}(1))
-            ParallelUtilities.indicatemapprogress!(progress)
-            @test take!(progress) == (true,false)
+            @test isnothing(ParallelUtilities.indicatemapprogress!(nothing,1))
+            rettype = Tuple{Bool,Bool,Int}
+            progress = RemoteChannel(()->Channel{rettype}(1))
+            ParallelUtilities.indicatemapprogress!(progress,10)
+            @test take!(progress) == (true,false,10)
         end
-	end
+	end;
 
 	@testset "reduce" begin
 
@@ -1022,16 +1200,16 @@ end
             rank = 1
             val = pval(rank,result)
 
-            pipe = BranchChannel{typeof(val),typeof(val)}(0)
+            pipe = BranchChannel{typeof(val),typeof(val)}(myid(),0)
             put!(pipe.selfchannels.out,val)
             @test ParallelUtilities.reducedvalue(sum,rank,pipe,Sorted()) == val
 
-            pipe = BranchChannel{typeof(result),typeof(result)}(0)
+            pipe = BranchChannel{typeof(result),typeof(result)}(myid(),0)
             put!(pipe.selfchannels.out,result)
             @test ParallelUtilities.reducedvalue(sum,rank,pipe,Unsorted()) == result
-		end
+		end;
 
-		# Values are collected at the intermediate nodes
+		# # Values are collected at the intermediate nodes
 		@testset "at parent nodes" begin
 
 			# Put some known values on the self and children channels
@@ -1099,16 +1277,16 @@ end
 
 			    for nchildren = 1:2
 			    	@testset "Unsorted" begin
-			            pipe = BranchChannel{Int,Int}(nchildren)
+			            pipe = BranchChannel{Int,Int}(myid(),nchildren)
 			            res_exp = sum(0:nchildren)
 			            testreduction(sum,pipe,Unsorted(),res_exp)
 			        end
 			    	@testset "Sorted" begin
-			            pipe = BranchChannel{pval,pval}(nchildren)
+			            pipe = BranchChannel{pval,pval}(myid(),nchildren)
 			            res_exp = collect(1:nchildren+1)
 			            testreduction(x->vcat(x...),pipe,Sorted(),res_exp)
 			    
-			            pipe = BranchChannel{pval,pval}(nchildren)
+			            pipe = BranchChannel{pval,pval}(myid(),nchildren)
 			            res_exp = sum(1:nchildren+1)
 			            testreduction(sum,pipe,Sorted(),res_exp)
 			    	end
@@ -1146,7 +1324,7 @@ end
 
 		    	for nchildren = 1:2
 			    	@testset "Unsorted" begin
-			            pipe = BranchChannel{Int,Int}(nchildren)
+			            pipe = BranchChannel{Int,Int}(myid(),nchildren)
 			            res_exp = sum(0:nchildren)
 			            testreduction(sum,pipe,Unsorted(),res_exp)
 
@@ -1156,16 +1334,16 @@ end
 			            testreduction(sum,pipe,Unsorted(),res_exp)
 			        end
 			    	@testset "Sorted" begin
-			            pipe = BranchChannel{pval,pval}(nchildren)
+			            pipe = BranchChannel{pval,pval}(myid(),nchildren)
 			            res_exp = collect(1:nchildren+1)
 			            testreduction(x->vcat(x...),pipe,Sorted(),res_exp)
 
-			            rc_parent = RemoteChannelContainer{pval}(1)
+			            rc_parent = RemoteChannelContainer{pval}(myid(),1)
 			            p = workers()[1]
 			            pipe = BranchChannel(p,pval,rc_parent,nchildren)
 			            testreduction(x->vcat(x...),pipe,Sorted(),res_exp)
 			    
-			            pipe = BranchChannel{pval,pval}(nchildren)
+			            pipe = BranchChannel{pval,pval}(myid(),nchildren)
 			            res_exp = sum(1:nchildren+1)
 			            testreduction(sum,pipe,Sorted(),res_exp)
 
@@ -1176,18 +1354,19 @@ end
 			    	end
 			    end
 		    end
-		end
+		end;
 
         @testset "progress" begin
-            @test isnothing(ParallelUtilities.indicatereduceprogress!(nothing))
-            progress = RemoteChannel(()->Channel{Tuple{Bool,Bool}}(1))
-            ParallelUtilities.indicatereduceprogress!(progress)
-            @test take!(progress) == (false,true)
+            @test isnothing(ParallelUtilities.indicatereduceprogress!(nothing,1))
+            rettype = Tuple{Bool,Bool,Int}
+            progress = RemoteChannel(()->Channel{rettype}(1))
+            ParallelUtilities.indicatereduceprogress!(progress,10)
+            @test take!(progress) == (false,true,10)
         end
-	end
+	end;
 
-	@testset "pmapbatch" begin
-		@testset "batch" begin
+	@testsetwithinfo "pmapbatch" begin
+		@testsetwithinfo "batch" begin
 			@testset "comparison with map" begin
 				iterable = 1:nworkers()
 			    res = pmapbatch(x->myid(),iterable)
@@ -1224,7 +1403,7 @@ end
 			end
 		end
 		
-		@testset "elementwise" begin
+		@testsetwithinfo "elementwise" begin
 			@testset "comparison with map" begin
 			    iterable = 1:nworkers()
 			    res = pmapbatch_elementwise(identity,iterable)
@@ -1242,10 +1421,10 @@ end
 			    @test_throws exceptiontype pmapbatch_elementwise(x->throw(BoundsError()),1:10)
 			end
 		end
-	end
+	end;
 
-	@testset "pmapsum" begin
-		@testset "batch" begin
+	@testsetwithinfo "pmapsum" begin
+		@testsetwithinfo "batch" begin
 		    @testset "rank" begin
                 res_exp = sum(1:nworkers())
                 @testset "without progress" begin
@@ -1287,7 +1466,7 @@ end
 			    @test pmapsum(x->sum(y[1] for y in x),iters) == sum(iters[1])*length(iters[2])
 		    end
 		    
-		    @testset "run elsewhere" begin
+		    @testsetwithinfo "run elsewhere" begin
 		    	res_exp = sum(workers())
 		    	for p in workers()
 		    		res = @fetchfrom p pmapsum(x->myid(),1:nworkers())
@@ -1297,10 +1476,11 @@ end
 
 		    @testset "errors" begin
 		        @test_throws exceptiontype pmapsum(x->error("map"),1:10)
+                @test_throws exceptiontype pmapsum(x->fmap(x),1:10)
 		    end
 		end
 
-		@testset "elementwise" begin
+		@testsetwithinfo "elementwise" begin
 			@testset "comparison with map" begin
 			    iterable = 1:100
                 @testset "without progress" begin
@@ -1342,10 +1522,10 @@ end
             @test_throws exceptiontype pmapsum(x->[1.1],Vector{Int},1:nworkers())
             @test pmapsum(x->ones(2).*myid(),Vector{Int},1:nworkers()) isa Vector{Int}
         end
-	end
+	end;
 
-	@testset "pmapreduce_commutative" begin
-	    @testset "batch" begin
+	@testsetwithinfo "pmapreduce_commutative" begin
+	    @testsetwithinfo "batch" begin
 			@testset "sum" begin
                 res_exp = sum(workers())
                 @testset "without progress" begin
@@ -1372,7 +1552,7 @@ end
 			    @test pmapreduce_commutative(x->myid(),prod,(1:nworkers(),1:1)) == prod(workers())
 		    end
 
-		    @testset "run elsewhere" begin
+		    @testsetwithinfo "run elsewhere" begin
 		    	res_exp = prod(workers())
 		    	for p in workers()
 		    		res = @fetchfrom p pmapreduce_commutative(x->myid(),prod,1:nworkers())
@@ -1387,16 +1567,25 @@ end
 												identity,x->error("reduce"),1:10)
 				@test_throws exceptiontype pmapreduce_commutative(
 												x->error("map"),x->error("reduce"),1:10)
+
+                @test_throws exceptiontype pmapreduce_commutative(
+                                                x->fmap("map"),sum,1:10)
+                @test_throws exceptiontype pmapreduce_commutative(
+                                                x->1,x->fred(x),1:10)
+                @test_throws exceptiontype pmapreduce_commutative(
+                                                x->fmap(x),x->fred(x),1:10)
 		    end
+
             @testset "type coercion" begin
                 @test_throws exceptiontype pmapreduce_commutative(x->[1.1],Vector{Int},
                                                 sum,Vector{Int},1:nworkers())
                 res = pmapreduce_commutative(x->ones(2).*myid(),Vector{Int},sum,Vector{Int},1:nworkers())
                 @test res isa Vector{Int}
             end
-		end
-		@testset "elementwise" begin
-			@testset "comparison with map" begin
+		end;
+
+		@testsetwithinfo "elementwise" begin
+			@testsetwithinfo "comparison with map" begin
 			    iter = 1:1000
                 res_exp = sum(x->x^2,iter)
                 @testset "without progress" begin
@@ -1419,7 +1608,7 @@ end
                 @test res == float(res_exp)
 			end
 
-			@testset "run elsewhere" begin
+			@testsetwithinfo "run elsewhere" begin
 				iter = 1:1000
 				res_exp = sum(x->x^2,iter)
 		    	for p in workers()
@@ -1428,7 +1617,7 @@ end
 		        end
 		    end
 
-			@testset "errors" begin
+			@testsetwithinfo "errors" begin
 				@test_throws exceptiontype pmapreduce_commutative_elementwise(
 												x->error("map"),sum,1:10)
 				@test_throws exceptiontype pmapreduce_commutative_elementwise(
@@ -1437,11 +1626,11 @@ end
 												x->error("map"),
 												x->error("reduce"),1:10)
 			end
-		end
-	end
+		end;
+	end;
     
-	@testset "pmapreduce" begin
-		@testset "batch" begin
+	@testsetwithinfo "pmapreduce" begin
+		@testsetwithinfo "batch" begin
 		    @testset "sum" begin
                 res_exp = sum(workers())
                 @testset "without progress" begin
@@ -1486,7 +1675,7 @@ end
                 end
 		    end
 
-			@testset "run elsewhere" begin
+			@testsetwithinfo "run elsewhere" begin
 				res_exp = sum(workers())
 		    	for p in workers()
 		    		res = @fetchfrom p pmapreduce(x->myid(),sum,1:nworkers())
@@ -1512,6 +1701,9 @@ end
 			    @test_throws exceptiontype pmapreduce(x->error("map"),sum,1:10)
 				@test_throws exceptiontype pmapreduce(identity,x->error("reduce"),1:10)
 				@test_throws exceptiontype pmapreduce(x->error("map"),x->error("reduce"),1:10)
+                @test_throws exceptiontype pmapreduce(x->fmap(x),sum,1:10)
+                @test_throws exceptiontype pmapreduce(x->1,x->fred(x),1:10)
+                @test_throws exceptiontype pmapreduce(x->fmap(x),x->fred(x),1:10)
 			end
 
             @testset "type coercion" begin
@@ -1519,27 +1711,28 @@ end
                 @test pmapreduce(x->ones(2).*myid(),Vector{Int},sum,Vector{Int},1:nworkers()) isa Vector{Int}
             end
 		end
-	end
-end
+	end;
+end;
 
-@testset "error messages" begin
-    io = IOBuffer()
-    
-    showerror(io,ParallelUtilities.ProcessorNumberError(5,2))
-    strexp = "processor id 5 does not line in the range 1:2"
-    @test String(take!(io)) == strexp
+@testset "show" begin
 
-    showerror(io,ParallelUtilities.DecreasingIteratorError())
-    strexp = "all the iterators need to be strictly increasing"
-    @test String(take!(io)) == strexp
+    @testset "error" begin
+        io = IOBuffer()
+        
+        showerror(io,ParallelUtilities.ProcessorNumberError(5,2))
+        strexp = "processor id 5 does not line in the range 1:2"
+        @test String(take!(io)) == strexp
 
-    showerror(io,ParallelUtilities.BinaryTreeError(0))
-    strexp = "attempt to construct a binary tree with 0 children"
-    @test String(take!(io)) == strexp
+        showerror(io,ParallelUtilities.DecreasingIteratorError())
+        strexp = "all the iterators need to be strictly increasing"
+        @test String(take!(io)) == strexp
 
-    showerror(io,ParallelUtilities.TaskNotPresentError((1:4,),(5,)))
-    strexp = "could not find the task $((5,)) in the list $((1:4,))"
-    @test String(take!(io)) == strexp
-end
+        showerror(io,ParallelUtilities.TaskNotPresentError((1:4,),(5,)))
+        strexp = "could not find the task $((5,)) in the list $((1:4,))"
+        @test String(take!(io)) == strexp
+    end
+end;
+
+end; # wrapper
 
 rmprocs(workers())

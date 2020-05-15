@@ -1,6 +1,6 @@
 module ParallelUtilities
 using ProgressMeter
-
+using DataStructures
 using Reexport
 @reexport using Distributed
 

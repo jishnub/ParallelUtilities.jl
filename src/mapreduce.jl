@@ -25,9 +25,14 @@ end
 	put!(pipe.selfchannels.out,valT)
 end
 
-function indicatemapprogress!(::Nothing) end
-function indicatemapprogress!(progress::RemoteChannel)
-	put!(progress,(true,false))
+function indicatemapprogress!(::Nothing,rank) end
+function indicatemapprogress!(progress::RemoteChannel,rank)
+	put!(progress,(true,false,rank))
+end
+
+function indicatefailure!(::Nothing,rank) end
+function indicatefailure!(progress::RemoteChannel,rank)
+	put!(progress,(false,false,rank))
 end
 
 function mapTreeNode(fmap::Function,iterator,rank,pipe::BranchChannel,
@@ -40,11 +45,11 @@ function mapTreeNode(fmap::Function,iterator,rank,pipe::BranchChannel,
 		res = fmap(iterator,args...;kwargs...)
 		maybepvalput!(pipe,rank,res)
 		put!(pipe.selfchannels.err,false)
+		indicatemapprogress!(progress,rank)
 	catch
 		put!(pipe.selfchannels.err,true)
+		indicatefailure!(progress,rank)
 		rethrow()
-	finally
-		indicatemapprogress!(progress)
 	end
 end
 
@@ -59,15 +64,25 @@ struct Unsorted <: Ordering end
 function reducedvalue(freduce::Function,rank,
 	pipe::BranchChannel{Tmap,Tred},::Unsorted) where {Tmap,Tred}
 
-	self = take!(pipe.selfchannels.out) :: Tmap
-
 	N = nchildren(pipe)
-	res = if N > 0
+	if rank > 0
+		self = take!(pipe.selfchannels.out) :: Tmap
+		if N > 0
 			reducechildren = freduce(take!(pipe.childrenchannels.out)::Tred for i=1:N)::Tred
-			freduce((reducechildren,self)) :: Tred
-		else
-			freduce((self,)) :: Tred
+			res = freduce((reducechildren, self)) :: Tred
+		elseif N == 0
+			res = freduce((self,)) :: Tred
 		end
+	else
+		if N > 0
+			res = freduce(take!(pipe.childrenchannels.out)::Tred for i=1:N)::Tred
+		elseif N == 0
+			# N == 0 && rank <= 0
+			# shouldn't reach this
+			error("nodes with rank <=0 must have children")
+		end
+	end
+	return res
 end
 
 function reducedvalue(freduce::Function,rank,
@@ -95,9 +110,9 @@ function reducedvalue(freduce::Function,rank,
 	Tred(rank,freduce(value(v) for v in vals))
 end
 
-function indicatereduceprogress!(::Nothing) end
-function indicatereduceprogress!(progress::RemoteChannel)
-	put!(progress,(false,true))
+function indicatereduceprogress!(::Nothing,rank) end
+function indicatereduceprogress!(progress::RemoteChannel,rank)
+	put!(progress,(false,true,rank))
 end
 
 function reduceTreeNode(freduce::Function,rank,pipe::BranchChannel{Tmap,Tred},
@@ -106,8 +121,13 @@ function reduceTreeNode(freduce::Function,rank,pipe::BranchChannel{Tmap,Tred},
 
 	# Start by checking if there is any error locally in the map,
 	# and if there's none then check if there are any errors on the children
-	anyerr = take!(pipe.selfchannels.err) || 
-				any(take!(pipe.childrenchannels.err) for i=1:nchildren(pipe))
+	if rank > 0
+		anyerr = take!(pipe.selfchannels.err)
+	else
+		anyerr = false
+	end 
+	anyerr = anyerr || 
+		any(take!(pipe.childrenchannels.err) for i=1:nchildren(pipe))
 
 	# Evaluate the reduction only if there's no error
 	# In either case push the error flag to the parent
@@ -116,15 +136,15 @@ function reduceTreeNode(freduce::Function,rank,pipe::BranchChannel{Tmap,Tred},
 			res = reducedvalue(freduce,rank,pipe,ifsort) :: Tred
 			put!(pipe.parentchannels.out,res)
 			put!(pipe.parentchannels.err,false)
+			indicatereduceprogress!(progress,rank)
 		catch e
 			put!(pipe.parentchannels.err,true)
+			indicatefailure!(progress,rank)
 			rethrow()
-		finally
-			indicatereduceprogress!(progress)
 		end
 	else
 		put!(pipe.parentchannels.err,true)
-		indicatereduceprogress!(progress)
+		indicatefailure!(progress,rank)
 	end
 
 	finalize(pipe)
@@ -147,40 +167,67 @@ function pmapreduceworkers(fmap::Function,freduce::Function,iterators::Tuple,
 	kwargs...)
 
 	num_workers_active = nworkersactive(iterators)
+	Nmaptotal = num_workers_active
+	Nreducetotal = length(branches)
+	extrareducenodes = Nreducetotal - Nmaptotal
+	
+	Nprogress = Nmaptotal+Nreducetotal
+	progresschannel = RemoteChannel(()->Channel{Tuple{Bool,Bool,Int}}(
+						ifelse(showprogress,Nprogress,0)))
+	progressbar = Progress(Nprogress,1,progressdesc)
 
-	nmap,nred = 0,0
-	progresschannel = RemoteChannel(()->Channel{Tuple{Bool,Bool}}(
-						ifelse(showprogress,2num_workers_active,0)))
-	progressbar = Progress(2num_workers_active,1,progressdesc)
-
-	# Run the function on each processor and compute the reduction at each node
 	@sync begin
-		for (rank,mypipe) in enumerate(branches)
-			@async begin
-				p = mypipe.p
+
+		for (ind,mypipe) in enumerate(branches)
+			p = mypipe.p
+			rank = ind - extrareducenodes
+			if rank > 0
 				iterable_on_proc = ProductSplit(iterators,num_workers_active,rank)
 
 				@spawnat p mapTreeNode(fmap,iterable_on_proc,rank,mypipe,
 					ifelse(showprogress,progresschannel,nothing),
 					args...;kwargs...)
+
+				@spawnat p reduceTreeNode(freduce,rank,mypipe,ord,
+					ifelse(showprogress,progresschannel,nothing))
+			else
 				@spawnat p reduceTreeNode(freduce,rank,mypipe,ord,
 					ifelse(showprogress,progresschannel,nothing))
 			end
 		end
-		
-		if showprogress
-			for i = 1:2num_workers_active
-				mapdone,reddone = take!(progresschannel)
-				nmap += mapdone
-				nred += reddone
 
-				next!(progressbar;showvalues=[(:map,nmap),(:reduce,nred)])
+		if showprogress
+
+			mapdone,reducedone = 0,0
+
+			for i = 1:Nprogress
+				mapflag,redflag,rank = take!(progresschannel)
+				# both flags are false in case of an error
+				mapflag || redflag || break
+
+				mapdone += mapflag
+				reducedone += redflag
+
+				if mapdone != Nmaptotal && reducedone != Nreducetotal
+					showvalues = [
+					(:map,string(mapdone)*"/"*string(Nmaptotal)),
+					(:reduce,string(reducedone)*"/"*string(Nreducetotal))
+					]
+
+				elseif reducedone != Nreducetotal
+					showvalues = [
+					(:reduce,string(reducedone)*"/"*string(Nreducetotal))
+					]
+				else
+					showvalues = []
+				end
+
+				next!(progressbar;showvalues=showvalues)
 			end
-			finish!(progressbar)
 		end
 	end
 
-	return_unless_error(topnode(tree,branches))
+	return_unless_error(topbranch(tree,branches))
 end
 
 """
@@ -227,14 +274,6 @@ julia> pmapreduce_commutative(x->ones(2), x->hcat(x...), 1:4)
  1.0  1.0  1.0  1.0
  1.0  1.0  1.0  1.0
 
-julia> pmapreduce_commutative(x->(sleep(myid());ones(2)), x->hcat(x...), 1:4, showprogress=true, progressdesc="Progress : ")
-Progress : 100%|████████████████████████████████████████| Time: 0:00:05
-  map:     4
-  reduce:  4
-2×4 Array{Float64,2}:
- 1.0  1.0  1.0  1.0
- 1.0  1.0  1.0  1.0
-
 julia> pmapreduce_commutative(x->ones(2), Vector{Int64}, x->hcat(x...), Matrix{Int64}, 1:4)
 2×4 Array{Int64,2}:
  1  1  1  1
@@ -243,12 +282,12 @@ julia> pmapreduce_commutative(x->ones(2), Vector{Int64}, x->hcat(x...), Matrix{I
 
 See also: [`pmapreduce_commutative_elementwise`](@ref), [`pmapreduce`](@ref), [`pmapsum`](@ref)
 """
-function pmapreduce_commutative(fmap::Function,::Type{Tmap},
-	freduce::Function,::Type{Tred},iterators::Tuple,args...;
-	kwargs...) where {Tmap,Tred}
+function pmapreduce_commutative(fmap::Function,Tmap::Type,
+	freduce::Function,Tred::Type,iterators::Tuple,args...;
+	kwargs...)
 	
 	tree,branches = createbranchchannels(Tmap,Tred,iterators,
-		SequentialBinaryTree)
+		SegmentedSequentialBinaryTree)
 	pmapreduceworkers(fmap,freduce,iterators,tree,
 		branches,Unsorted(),args...;kwargs...)
 end
@@ -259,8 +298,9 @@ function pmapreduce_commutative(fmap::Function,freduce::Function,
 	pmapreduce_commutative(fmap,Any,freduce,Any,iterators,args...;kwargs...)
 end
 
-function pmapreduce_commutative(fmap::Function,::Type{Tmap},freduce::Function,::Type{Tred},
-	iterable,args...;kwargs...) where {Tmap,Tred}
+function pmapreduce_commutative(fmap::Function,Tmap::Type,
+	freduce::Function,Tred::Type,
+	iterable,args...;kwargs...)
 	pmapreduce_commutative(fmap,Tmap,freduce,Tred,(iterable,),args...;kwargs...)
 end
 
@@ -310,22 +350,16 @@ julia> pmapreduce_commutative_elementwise(x->x^2,prod,1:5)
 julia> pmapreduce_commutative_elementwise((x,y)->x+y,sum,(1:2,1:2))
 12
 
-julia> pmapreduce_commutative_elementwise(x->(sleep(myid());x^2), prod, 1:5, showprogress=true, progressdesc = "Progress : ")
-Progress : 100%|██████████████████████████████████████| Time: 0:00:05
-  map:     4
-  reduce:  4
-14400
-
 julia> pmapreduce_commutative_elementwise(x->x^2,Int,prod,Float64,1:5)
 14400.0
 ```
 
 See also: [`pmapsum_commutative_elementwise`](@ref), [`pmapreduce_commutative`](@ref)
 """
-function pmapreduce_commutative_elementwise(fmap::Function,::Type{Tmap},
-	freduce::Function,::Type{Tred},iterable,args...;
+function pmapreduce_commutative_elementwise(fmap::Function,Tmap::Type,
+	freduce::Function,Tred::Type,iterable,args...;
 	showprogress::Bool = false, progressdesc = "Progress in pmapreduce : ",
-	kwargs...) where {Tmap,Tred}
+	kwargs...)
 	
 	pmapreduce_commutative(
 		plist->freduce((fmap(x...,args...;kwargs...) for x in plist)),
@@ -380,14 +414,6 @@ julia> pmapsum(x->ones(2), 1:4)
  4.0
  4.0
 
-julia> pmapsum(x->(sleep(myid());ones(2)), 1:4, showprogress=true, progressdesc = "Progress : ")
-Progress : 100%|███████████████████████████████| Time: 0:00:05
-  map:     4
-  reduce:  4
-2-element Array{Float64,1}:
- 4.0
- 4.0
-
 julia> pmapsum(x->ones(2), Vector{Int64}, 1:4)
 2-element Array{Int64,1}:
  4
@@ -396,7 +422,7 @@ julia> pmapsum(x->ones(2), Vector{Int64}, 1:4)
 
 See also: [`pmapreduce`](@ref), [`pmapreduce_commutative`](@ref)
 """
-function pmapsum(fmap::Function,::Type{T},iterable,args...;kwargs...) where {T}
+function pmapsum(fmap::Function,T::Type,iterable,args...;kwargs...)
 	pmapreduce_commutative(fmap,T,sum,T,iterable,args...;
 		progressdesc = "Progress in pmapsum : ",kwargs...)
 end
@@ -439,21 +465,15 @@ julia> pmapsum_elementwise(x->x^2,1:200)
 julia> pmapsum_elementwise((x,y)-> x+y, (1:5,1:2))
 45
 
-julia> pmapsum_elementwise(x->(sleep(myid());x^2), 1:5, showprogress=true, progressdesc = "Progress : ")
-Progress : 100%|███████████████████████████████████████| Time: 0:00:05
-  map:     4
-  reduce:  4
-55
-
 julia> pmapsum_elementwise(x->x^2, Float64, 1:5)
 55.0
 ```
 
 See also: [`pmapreduce_commutative_elementwise`](@ref), [`pmapsum`](@ref)
 """
-function pmapsum_elementwise(fmap::Function,::Type{T},iterable,args...;
+function pmapsum_elementwise(fmap::Function,T::Type,iterable,args...;
 	showprogress::Bool = false, progressdesc = "Progress in pmapsum : ",
-	kwargs...) where {T}
+	kwargs...)
 
 	pmapsum(plist->sum(x->fmap(x...,args...;kwargs...),plist),T,iterable,
 		showprogress = showprogress, progressdesc = progressdesc)
@@ -510,14 +530,6 @@ julia> pmapreduce(x->ones(2).*myid(), x->hcat(x...), 1:4)
  2.0  3.0  4.0  5.0
  2.0  3.0  4.0  5.0
 
-julia> pmapreduce(x->(sleep(myid());ones(2).*myid()), x->hcat(x...), 1:4, showprogress=true, progressdesc="Progress : ")
-Progress : 100%|██████████████████████████████████████| Time: 0:00:05
-  map:     4
-  reduce:  4
-2×4 Array{Float64,2}:
- 2.0  3.0  4.0  5.0
- 2.0  3.0  4.0  5.0
-
 julia> pmapreduce(x->ones(2).*myid(), Vector{Int64}, x->hcat(x...), Matrix{Int64}, 1:4)
 2×4 Array{Int64,2}:
  2  3  4  5
@@ -526,8 +538,8 @@ julia> pmapreduce(x->ones(2).*myid(), Vector{Int64}, x->hcat(x...), Matrix{Int64
 
 See also: [`pmapreduce_commutative`](@ref), [`pmapsum`](@ref)
 """
-function pmapreduce(fmap::Function,::Type{Tmap},freduce::Function,::Type{Tred},
-	iterators::Tuple,args...;kwargs...) where {Tmap,Tred}
+function pmapreduce(fmap::Function,Tmap::Type,freduce::Function,Tred::Type,
+	iterators::Tuple,args...;kwargs...)
 
 	tree,branches = createbranchchannels(pval{Tmap},pval{Tred},
 		iterators,OrderedBinaryTree)
@@ -541,8 +553,8 @@ function pmapreduce(fmap::Function,freduce::Function,iterators::Tuple,args...;
 	pmapreduce(fmap,Any,freduce,Any,iterators,args...;kwargs...)
 end
 
-function pmapreduce(fmap::Function,::Type{Tmap},freduce::Function,::Type{Tred},
-	iterable,args...;kwargs...) where {Tmap,Tred}
+function pmapreduce(fmap::Function,Tmap::Type,freduce::Function,Tred::Type,
+	iterable,args...;kwargs...)
 	
 	pmapreduce(fmap,Tmap,freduce,Tred,(iterable,),args...;kwargs...)
 end

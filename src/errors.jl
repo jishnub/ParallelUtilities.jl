@@ -19,10 +19,3 @@ end
 function Base.showerror(io::IO,err::TaskNotPresentError)
 	print(io,"could not find the task $(err.task) in the list $(err.t)")
 end
-
-struct BinaryTreeError <: Exception 
-	n :: Int
-end
-function Base.showerror(io::IO,err::BinaryTreeError)
-	print(io,"attempt to construct a binary tree with $(err.n) children")
-end

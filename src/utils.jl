@@ -41,15 +41,29 @@ Return the unique hostnames that the workers in `procs` lie on.
 On an HPC system these are usually the hostnames of the nodes involved.
 """
 nodenames(procs = workers()) = nodenames(gethostnames(procs))
-nodenames(hostnames::Vector{String}) = unique(hostnames)
-
-function nprocs_node(hostnames::Vector{String})
-	nodes = nodenames(hostnames)
-	nprocs_node(hostnames,nodes)	
+function nodenames(hostnames::Vector{String})
+	nodes = unique(hostnames)
 end
 
-function nprocs_node(hostnames::Vector{String},nodes::Vector{String})
-	Dict(node=>count(isequal(node),hostnames) for node in nodes)
+"""
+	procs_node(procs = workers())
+
+Return the worker ids on each host of the cluster.
+On an HPC system this would return the workers on each node.
+"""
+function procs_node(procs = workers())
+	hosts = gethostnames(procs)
+	nodes = nodenames(hosts)
+	procs_node(procs,hosts,nodes)
+end
+
+function procs_node(procs,hosts,nodes)
+	d = OrderedDict{String,Vector{Int}}()
+	for node in nodes
+		p = procs[findall(isequal(node),hosts)]
+		d[node] = p
+	end
+	return d
 end
 
 """
@@ -61,3 +75,22 @@ On an HPC system this would return the number of workers on each node.
 function nprocs_node(procs = workers())
 	nprocs_node(gethostnames(procs))
 end
+
+function nprocs_node(hostnames::Vector{String})
+	nodes = nodenames(hostnames)
+	nprocs_node(hostnames,nodes)	
+end
+
+function nprocs_node(hostnames::Vector{String},nodes::Vector{String})
+	Dict(node=>count(isequal(node),hostnames) for node in nodes)
+end
+
+function nprocs_node(d::AbstractDict{String,AbstractVector{<:Integer}})
+	nphost = OrderedDict{String,Int}()
+	for (node,pnode) in d
+		nphost[node] = length(pnode)
+	end
+	return nphost
+end
+
+
