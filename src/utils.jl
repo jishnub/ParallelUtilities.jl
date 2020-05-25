@@ -85,7 +85,7 @@ function nprocs_node(hostnames::Vector{String},nodes::Vector{String})
 	Dict(node=>count(isequal(node),hostnames) for node in nodes)
 end
 
-function nprocs_node(d::AbstractDict{String,AbstractVector{<:Integer}})
+function nprocs_node(d::AbstractDict{String,<:AbstractVector{<:Integer}})
 	nphost = OrderedDict{String,Int}()
 	for (node,pnode) in d
 		nphost[node] = length(pnode)

@@ -15,7 +15,7 @@ addprocs(workersused)
     SequentialBinaryTree, OrderedBinaryTree, SegmentedSequentialBinaryTree,
     parentnoderank, nchildren,
     maybepvalput!, createbranchchannels, nworkersactive, workersactive,
-    procs_node
+    procs_node, leafrankfoldedtree
 end
 
 macro testsetwithinfo(str,ex)
@@ -28,7 +28,7 @@ end
 # Wrap a testset around this to get the result at the end
 @testset "ParallelUtilities" begin
 
-@testset "ProductSplit" begin
+@testsetwithinfo "ProductSplit" begin
 
 	various_iters = [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6),
 		    	(1:2,Base.OneTo(4),1:3:10)]
@@ -379,7 +379,7 @@ end
     end
 end;
 
-@testset "ReverseLexicographicTuple" begin
+@testsetwithinfo "ReverseLexicographicTuple" begin
     @testset "isless" begin
     	a = ParallelUtilities.ReverseLexicographicTuple((1,2,3))
         b = ParallelUtilities.ReverseLexicographicTuple((2,2,3))
@@ -407,7 +407,7 @@ end;
     end
 end;
 
-@testset "utilities" begin
+@testsetwithinfo "utilities" begin
     @testset "workers active" begin
         @test nworkersactive((1:1,)) == 1
         @test nworkersactive((1:2,)) == min(2,nworkers())
@@ -455,11 +455,13 @@ end;
             pnode = workers()[findall(isequal(node),hostnames)]
             @test p1[node] == pnode
         end
+        np4 = nprocs_node(p1)
+        @test np1 == np4
     end
 end;
 
 @testset "BinaryTree" begin
-    @testset "BinaryTreeNode" begin
+    @testsetwithinfo "BinaryTreeNode" begin
     	@testset "Constructor" begin
 	    	p = workers()[1]
 	    	b = BinaryTreeNode(p,p,0)
@@ -727,6 +729,14 @@ end;
                     @test length(tree) == 12 + 3 
                 end;
 
+                @testset "leafrankfoldedtree" begin
+                    @test leafrankfoldedtree(5,1) == 8
+                    @test leafrankfoldedtree(5,2) == 9
+                    @test leafrankfoldedtree(5,3) == 5
+                    @test leafrankfoldedtree(5,4) == 6
+                    @test leafrankfoldedtree(5,5) == 7
+                end;
+
                 @testset "pid and parent" begin
                     for imax = 2:100
                         procs = 1:imax
@@ -740,6 +750,7 @@ end;
                         @test topnoderank == 1
                         @test tree[topnoderank] == ParallelUtilities.topnode(tree)
                         @test tree[1].parent == 1
+                        @test parentnoderank(tree,1) == 1
                         for (ind,rank) in enumerate(1:mid)
                             node = tree[rank+1]
                             parentnode = tree[parentnoderank(tree,rank+1)]
@@ -1213,15 +1224,17 @@ end;
 		@testset "at parent nodes" begin
 
 			# Put some known values on the self and children channels
-			function putselfchildren!(pipe::BranchChannel,::Unsorted)
-		    	put!(pipe.selfchannels.out,0)
-		    	put!(pipe.selfchannels.err,false)
+			function putselfchildren!(pipe::BranchChannel,::Unsorted,rank=1)
+                if rank >= 1
+    		    	put!(pipe.selfchannels.out,0)
+    		    	put!(pipe.selfchannels.err,false)
+                end
 		    	for i=1:nchildren(pipe)
 		    		put!(pipe.childrenchannels.out,i)
 		    		put!(pipe.childrenchannels.err,false)
 		    	end
 		    end
-		    function putselfchildren!(pipe::BranchChannel{<:pval},::Sorted)
+		    function putselfchildren!(pipe::BranchChannel{<:pval},::Sorted,rank=1)
 		    	put!(pipe.selfchannels.out,pval(2,2))
 		    	put!(pipe.selfchannels.err,false)
                 N = nchildren(pipe)
@@ -1239,8 +1252,10 @@ end;
                 end
 		    end
 
-		    function clearerrors!(pipe::BranchChannel)
-		    	take!(pipe.selfchannels.err)
+		    function clearerrors!(pipe::BranchChannel,rank=1)
+                if rank >= 1
+                    take!(pipe.selfchannels.err)
+                end
 		    	for i=1:nchildren(pipe)
 		    		take!(pipe.childrenchannels.err)
 		    	end
@@ -1249,27 +1264,26 @@ end;
 			@testset "reducedvalue" begin
 
 				function testreduction(freduce::Function,pipe::BranchChannel,
-		    		ifsorted::Ordering,res_exp)
+		    		ifsorted::Ordering,res_exp,rank=2)
 
 			    	p = pipe.p
-                    rank = 2
 
 			    	try
-				    	putselfchildren!(pipe,ifsorted)
+				    	putselfchildren!(pipe,ifsorted,rank)
 						@test value(reducedvalue(freduce,rank,pipe,ifsorted)) == res_exp
-						clearerrors!(pipe)
+						clearerrors!(pipe,rank)
 				    	
-				  		@fetchfrom p putselfchildren!(pipe,ifsorted)
+				  		@fetchfrom p putselfchildren!(pipe,ifsorted,rank)
 						@test value(@fetchfrom p reducedvalue(freduce,rank,pipe,ifsorted)) == res_exp
-						clearerrors!(pipe)
+						clearerrors!(pipe,rank)
 						
-						@fetchfrom p putselfchildren!(pipe,ifsorted)
+						@fetchfrom p putselfchildren!(pipe,ifsorted,rank)
 						@test value(reducedvalue(freduce,rank,pipe,ifsorted)) == res_exp
-						clearerrors!(pipe)
+						clearerrors!(pipe,rank)
 						
-						putselfchildren!(pipe,ifsorted)
+						putselfchildren!(pipe,ifsorted,rank)
 						@test value(@fetchfrom p reducedvalue(freduce,rank,pipe,ifsorted)) == res_exp
-						clearerrors!(pipe)
+						clearerrors!(pipe,rank)
 					catch
 						rethrow()
 					end
@@ -1279,7 +1293,8 @@ end;
 			    	@testset "Unsorted" begin
 			            pipe = BranchChannel{Int,Int}(myid(),nchildren)
 			            res_exp = sum(0:nchildren)
-			            testreduction(sum,pipe,Unsorted(),res_exp)
+			            testreduction(sum,pipe,Unsorted(),res_exp,2)
+                        testreduction(sum,pipe,Unsorted(),res_exp,0)
 			        end
 			    	@testset "Sorted" begin
 			            pipe = BranchChannel{pval,pval}(myid(),nchildren)
@@ -1291,6 +1306,13 @@ end;
 			            testreduction(sum,pipe,Sorted(),res_exp)
 			    	end
 			    end
+
+                # The top tree must have children by definition
+                pipe = BranchChannel{Int,Int}(myid(),0)
+                putselfchildren!(pipe,Unsorted(),0)
+                err = ErrorException("nodes with rank <=0 must have children")
+                @test_throws err reducedvalue(sum,0,pipe,Unsorted())
+                clearerrors!(pipe,0)
 			end
 
 			@testset "reduceTreeNode" begin
@@ -1362,6 +1384,10 @@ end;
             progress = RemoteChannel(()->Channel{rettype}(1))
             ParallelUtilities.indicatereduceprogress!(progress,10)
             @test take!(progress) == (false,true,10)
+
+            @test isnothing(ParallelUtilities.indicatefailure!(nothing,1))
+            ParallelUtilities.indicatefailure!(progress,10)
+            @test take!(progress) == (false,false,10)
         end
 	end;
 
@@ -1729,6 +1755,25 @@ end;
 
         showerror(io,ParallelUtilities.TaskNotPresentError((1:4,),(5,)))
         strexp = "could not find the task $((5,)) in the list $((1:4,))"
+        @test String(take!(io)) == strexp
+    end
+
+    @testset "BranchChannel" begin
+        io = IOBuffer()
+
+        b = BranchChannel{Any,Any}(1,0)
+        show(io,b)
+        strexp = "Leaf  : 1 ← 1"
+        @test String(take!(io)) == strexp
+
+        b = BranchChannel{Any,Any}(1,1)
+        show(io,b)
+        strexp = "Branch: 1 ← 1 ← 1 child"
+        @test String(take!(io)) == strexp
+
+        b = BranchChannel{Any,Any}(1,2)
+        show(io,b)
+        strexp = "Branch: 1 ← 1 ⇇ 2 children"
         @test String(take!(io)) == strexp
     end
 end;

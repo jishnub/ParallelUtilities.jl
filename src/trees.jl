@@ -513,20 +513,6 @@ function Base.finalize(bc::BranchChannel)
 	finalize_except_wherewhence(bc.parentchannels)
 end
 
-function permuteworkers(w,p,toprank)
-	(length(w) == 1) && return w
-
-	rank = findfirst(isequal(p),w)
-	if !isnothing(rank) && rank != toprank
-		# Move the calling worker to the top of the tree
-		w_rest = w[w .!= p]
-		insert!(w_rest,toprank,p)
-		return w_rest
-	else
-		return w
-	end
-end
-
 function createbranchchannels!(branches,::Type{Tmap},::Type{Tred},tree::OrderedBinaryTree,
 	superbranch::BranchChannel) where {Tmap,Tred}
 
