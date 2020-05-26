@@ -238,20 +238,16 @@ The progress of the map-reduce operation might be tracked by setting the keyword
 # Running on 8 workers, artificially induce load using sleep
 julia> pmapreduce(x->(sleep(myid());myid()),x->hcat(x...),1:nworkers(),showprogress=true)
 Progress in pmapreduce : 100%|██████████████████████████████████████████████████| Time: 0:00:09
-  map:     8
-  reduce:  8
 1×8 Array{Int64,2}:
  2  3  4  5  6  7  8  9
 
 julia> pmapreduce(x->(sleep(myid());myid()),x->hcat(x...),1:nworkers(),showprogress=true,progressdesc="Progress : ")
 Progress : 100%|████████████████████████████████████████████████████████████████| Time: 0:00:09
-  map:     8
-  reduce:  8
 1×8 Array{Int64,2}:
  2  3  4  5  6  7  8  9
 ```
 
-Note that this does not track the progress of the individual maps, it merely tracks how many are completed.
+Note that this does not track the progress of the individual maps, it merely tracks how many are completed. The progress of the individual maps may be tracked by explicitly passing a `RemoteChannel` to the mapping function and pushing the progress status to it from the workers.
 
 ### Why two mapreduce functions?
 
