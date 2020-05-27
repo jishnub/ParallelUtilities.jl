@@ -3,7 +3,7 @@ struct ProcessorNumberError <: Exception
 	np :: Int
 end
 function Base.showerror(io::IO,err::ProcessorNumberError)
-	print(io,"processor id $(err.p) does not line in the range $(1:err.np)")
+	print(io,"processor id $(err.p) does not lie in the range $(1:err.np)")
 end
 
 struct DecreasingIteratorError <: Exception 

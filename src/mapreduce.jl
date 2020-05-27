@@ -90,20 +90,33 @@ function reducedvalue(freduce::Function,rank,
 
 	N = nchildren(pipe)
 	leftchild = N > 0
-	vals = Vector{Tred}(undef,N+1)
+	selfvalpresent = rank > 0
+	vals = Vector{Tred}(undef,N + selfvalpresent)
 	@sync begin
 		@async begin
-			selfval = take!(pipe.selfchannels.out)::Tmap
-			selfvalred = freduce((value(selfval),))
-			ind = 1 + leftchild
-			v = pval(rank,selfvalred)
-			vals[ind] = v
+			if selfvalpresent
+				selfval = take!(pipe.selfchannels.out)::Tmap
+				selfvalred = freduce((value(selfval),))
+				pv = pval(rank,selfvalred)
+				ind = selfvalpresent + leftchild
+				vals[ind] = pv
+			end
 		end
-		@async for i=2:N+1
-			pv = take!(pipe.childrenchannels.out) :: Tred
-			shift = pv.rank > rank ? 1 : -1
-			ind = shift + leftchild + 1
-			vals[ind] = pv
+		@async begin 
+			if selfvalpresent
+				for i=1:N
+					pv = take!(pipe.childrenchannels.out) :: Tred
+					shift = pv.rank > rank ? 1 : -1
+					ind = shift + leftchild + 1
+					vals[ind] = pv
+				end
+			else
+				for i=1:N
+					pv = take!(pipe.childrenchannels.out) :: Tred
+					vals[i] = pv
+				end
+				sort!(vals,by=pv->pv.rank)
+			end
 		end
 	end
 
@@ -125,7 +138,7 @@ function reduceTreeNode(freduce::Function,rank,pipe::BranchChannel{Tmap,Tred},
 		anyerr = take!(pipe.selfchannels.err)
 	else
 		anyerr = false
-	end 
+	end
 	anyerr = anyerr || 
 		any(take!(pipe.childrenchannels.err) for i=1:nchildren(pipe))
 
@@ -542,7 +555,7 @@ function pmapreduce(fmap::Function,Tmap::Type,freduce::Function,Tred::Type,
 	iterators::Tuple,args...;kwargs...)
 
 	tree,branches = createbranchchannels(pval{Tmap},pval{Tred},
-		iterators,OrderedBinaryTree)
+		iterators, SegmentedOrderedBinaryTree)
 	pmapreduceworkers(fmap,freduce,iterators,tree,
 		branches,Sorted(),args...;kwargs...)
 end
