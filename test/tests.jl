@@ -55,6 +55,7 @@ end
 	    	ntasks_total = prod(length.(iters))
 			for np = 1:npmax, p = 1:np
 		        ps = ProductSplit(iters,np,p)
+                @test eltype(ps) == Tuple{eltype.(iters)...}
 		        @test collect(ps) == collect(split_product_across_processors_iterators(iters,np,p))
 		        @test ntasks(ps) == ntasks_total
 		        @test ntasks(ps.iterators) == ntasks_total
@@ -659,8 +660,8 @@ end;
                 @testset "pid and parent" begin
                     for imax = 1:100
                         procs = 1:imax
-                        workersonnodes = Dict("host"=>procs)
-                        tree = SegmentedSequentialBinaryTree(procs,workersonnodes)
+                        workersonhosts = Dict("host"=>procs)
+                        tree = SegmentedSequentialBinaryTree(procs,workersonhosts)
                         SBT = SequentialBinaryTree(procs)
                         @test length(tree) == length(procs) == length(SBT)
 
@@ -743,10 +744,10 @@ end;
                     for imax = 2:100
                         procs = 1:imax
                         mid = div(imax,2)
-                        workersonnodes = OrderedDict{String,Vector{Int}}()
-                        workersonnodes["host1"] = procs[1:mid]
-                        workersonnodes["host2"] = procs[mid+1:end]
-                        tree = SegmentedSequentialBinaryTree(procs,workersonnodes)
+                        workersonhosts = OrderedDict{String,Vector{Int}}()
+                        workersonhosts["host1"] = procs[1:mid]
+                        workersonhosts["host2"] = procs[mid+1:end]
+                        tree = SegmentedSequentialBinaryTree(procs,workersonhosts)
 
                         topnoderank = ParallelUtilities.topnoderank(tree)
                         @test topnoderank == 1
@@ -758,7 +759,7 @@ end;
                             parentnode = tree[parentnoderank(tree,rank+1)]
                             @test nchildren(parentnode) > 0
                             @test parentnode.p == node.parent
-                            pnodes = workersonnodes["host1"]
+                            pnodes = workersonhosts["host1"]
                             @test node.p == pnodes[ind]
                             SBT = SequentialBinaryTree(pnodes)
                             if ind == 1
@@ -772,7 +773,7 @@ end;
                             parentnode = tree[parentnoderank(tree,rank+1)]
                             @test nchildren(parentnode) > 0
                             @test parentnode.p == node.parent
-                            pnodes = workersonnodes["host2"]
+                            pnodes = workersonhosts["host2"]
                             @test node.p == pnodes[ind]
                             SBT = SequentialBinaryTree(pnodes)
                             if ind == 1
@@ -825,8 +826,8 @@ end;
                 @testset "pid and parent" begin
                     for imax = 1:100
                         procs = 1:imax
-                        workersonnodes = Dict("host"=>procs)
-                        tree = SegmentedOrderedBinaryTree(procs,workersonnodes)
+                        workersonhosts = Dict("host"=>procs)
+                        tree = SegmentedOrderedBinaryTree(procs,workersonhosts)
                         treeOBT = OrderedBinaryTree(procs)
                         @test length(tree) == length(procs) == length(treeOBT)
 
@@ -948,10 +949,10 @@ end;
                     for imax = 2:100
                         procs = 1:imax
                         mid = div(imax,2)
-                        workersonnodes = OrderedDict{String,Vector{Int}}()
-                        workersonnodes["host1"] = procs[1:mid]
-                        workersonnodes["host2"] = procs[mid+1:end]
-                        tree = SegmentedOrderedBinaryTree(procs,workersonnodes)
+                        workersonhosts = OrderedDict{String,Vector{Int}}()
+                        workersonhosts["host1"] = procs[1:mid]
+                        workersonhosts["host2"] = procs[mid+1:end]
+                        tree = SegmentedOrderedBinaryTree(procs,workersonhosts)
 
                         top = ParallelUtilities.topnoderank(tree)
                         @test tree[top] == ParallelUtilities.topnode(tree)
@@ -959,7 +960,7 @@ end;
                             node = tree[rank+1]
                             parentnode = tree[parentnoderank(tree,rank+1)]
                             @test parentnode.p == node.parent
-                            pnodes = workersonnodes["host1"]
+                            pnodes = workersonhosts["host1"]
                             @test node.p == pnodes[ind]
                             OBT = OrderedBinaryTree(pnodes)
                             if ind == ParallelUtilities.topnoderank(OBT)
@@ -974,7 +975,7 @@ end;
                             node = tree[rank+1]
                             parentnode = tree[parentnoderank(tree,rank+1)]
                             @test parentnode.p == node.parent
-                            pnodes = workersonnodes["host2"]
+                            pnodes = workersonhosts["host2"]
                             @test node.p == pnodes[ind]
                             OBT = OrderedBinaryTree(pnodes)
                             if ind == ParallelUtilities.topnoderank(OBT)
@@ -1031,7 +1032,8 @@ end;
 	        @test rc.out.where == myid()
 	        @test rc.err.where == myid()
 	        @test eltype(rc) == Int
-	        for p in workers()
+	        for (ind,p) in enumerate(workers())
+                showworkernumber(ind,nworkers)
     	        rc = ParallelUtilities.RemoteChannelContainer{Int}(1,p)
     	        @test rc.out.where == p
     	        @test rc.err.where == p
@@ -1221,28 +1223,51 @@ end;
 	        function testbranches(T,tree)
     	        branches = createbranchchannels(T,T,tree)
     	        @test length(branches) == length(tree)
+                tnr = ParallelUtilities.topnoderank(tree)
     	        for (rank,branch) in enumerate(branches)
-    	        	parentrank = parentnoderank(tree,rank)
     	        	p = branch.p
-    	        	p_parent = branches[parentrank].p
+    	        	parentrank = parentnoderank(tree,rank)
+                    parentbranch = branches[parentrank]
+                    # Test channel host
     	        	@test branch.selfchannels.out.where == p
     	        	@test branch.selfchannels.err.where == p
     	        	@test branch.childrenchannels.out.where == p
     	        	@test branch.childrenchannels.err.where == p
-    	        	@test branch.parentchannels.out.where == p_parent
-    	        	@test branch.parentchannels.err.where == p_parent
+    	        	@test branch.parentchannels.out.where == parentbranch.p
+    	        	@test branch.parentchannels.err.where == parentbranch.p
+                    # Test link with parent
+                    # Holds for nodes other than the top node
+                    if rank != tnr
+                        @test branch.parentchannels.out === parentbranch.childrenchannels.out
+                        @test branch.parentchannels.err === parentbranch.childrenchannels.err
+                    end
     	        end
     	    end
-	        
-	        for TreeType in [SequentialBinaryTree,
-                OrderedBinaryTree,
-                SegmentedSequentialBinaryTree]
 
-                tree = TreeType(workers())
+            @testset "SequentialBinaryTree" begin
+                tree = SequentialBinaryTree(workers());
                 for T in [Int,Any,Bool,Vector{Float64},Array{ComplexF64,2}]
                     testbranches(T,tree)
                 end
-	        end
+            end
+            @testset "OrderedBinaryTree" begin
+                tree = OrderedBinaryTree(workers())
+                for T in [Int,Any,Bool,Vector{Float64},Array{ComplexF64,2}]
+                    testbranches(T,tree)
+                end
+            end
+            @testset "SegmentedSequentialBinaryTree" begin
+                tree = SegmentedSequentialBinaryTree(workers())
+                for T in [Int,Any,Bool,Vector{Float64},Array{ComplexF64,2}]
+                    testbranches(T,tree)
+                end
+            end
+            @testset "SegmentedOrderedBinaryTree" begin
+                tree = SegmentedOrderedBinaryTree(workers())
+                for T in [Int,Any,Bool,Vector{Float64},Array{ComplexF64,2}]
+                    testbranches(T,tree)
+                end
+            end
 
 	        iterators = (1:nworkers()+1,)
 	        tree,branches = createbranchchannels(iterators,SequentialBinaryTree)
@@ -1261,13 +1286,35 @@ end;
             # Make sure that all branches are defined
             for T in [SequentialBinaryTree,
                 OrderedBinaryTree,
-                SegmentedSequentialBinaryTree]
+                SegmentedSequentialBinaryTree,
+                SegmentedOrderedBinaryTree]
 
                 for nmax = 1:nworkers()
                     iterators = (1:nmax,)
                     tree,branches = createbranchchannels(iterators,T)
                     for i in eachindex(branches)
                         @test isassigned(branches,i)
+                    end
+                end
+            end
+
+            @testset "multiple hosts" begin
+                w = workers()
+                mid = div(nworkers(),2)
+                w1 = workers()[1:mid]
+                w2 = workers()[mid+1:end]
+                workersonhosts = OrderedDict("host1"=>w1,"host2"=>w2)
+
+                @testset "SegmentedSequentialBinaryTree" begin
+                    tree = SegmentedSequentialBinaryTree(w,workersonhosts)
+                    for T in [Int,Any]
+                        testbranches(T,tree)
+                    end
+                end
+                @testset "SegmentedOrderedBinaryTree" begin
+                    tree = SegmentedOrderedBinaryTree(w,workersonhosts)
+                    for T in [Int,Any]
+                        testbranches(T,tree)
                     end
                 end
             end
@@ -1444,20 +1491,23 @@ end;
 		    		put!(pipe.childrenchannels.err,false)
 		    	end
 		    end
-		    function putselfchildren!(pipe::BranchChannel{<:pval},::Sorted,rank=1)
-		    	put!(pipe.selfchannels.out,pval(2,2))
-		    	put!(pipe.selfchannels.err,false)
+		    function putselfchildren!(pipe::BranchChannel{<:pval},::Sorted,
+                selfrank=2,leftchildrank=1,rightchildrank=3)
+		    	if selfrank >= 1
+                    put!(pipe.selfchannels.out,pval(selfrank,2))
+    		    	put!(pipe.selfchannels.err,false)
+                end
                 N = nchildren(pipe)
 		    	
                 if N > 0
                     # left child
-    		    	put!(pipe.childrenchannels.out,pval(1,1))
+    		    	put!(pipe.childrenchannels.out,pval(leftchildrank,1))
     		    	put!(pipe.childrenchannels.err,false)
                 end
 
                 if N > 1
                     # right child
-                    put!(pipe.childrenchannels.out,pval(3,3))
+                    put!(pipe.childrenchannels.out,pval(rightchildrank,3))
                     put!(pipe.childrenchannels.err,false)
                 end
 		    end
@@ -1474,7 +1524,7 @@ end;
 			@testset "reducedvalue" begin
 
 				function testreduction(freduce::Function,pipe::BranchChannel,
-		    		ifsorted::Ordering,res_exp,rank=2)
+		    		ifsorted::Unsorted,res_exp,rank=2)
 
 			    	p = pipe.p
 
@@ -1499,30 +1549,64 @@ end;
 					end
 				end
 
-			    for nchildren = 1:2
+                function testreduction(freduce::Function,pipe::BranchChannel,
+                    ifsorted::Sorted,res_exp,
+                    selfrank=2,leftchildrank=1,rightchildrank=3)
+
+                    p = pipe.p
+                    ranks = (selfrank,leftchildrank,rightchildrank)
+
+                    try
+                        putselfchildren!(pipe,ifsorted,ranks...)
+                        @test value(reducedvalue(freduce,selfrank,pipe,ifsorted)) == res_exp
+                        clearerrors!(pipe,selfrank)
+                        
+                        @fetchfrom p putselfchildren!(pipe,ifsorted,ranks...)
+                        @test value(@fetchfrom p reducedvalue(freduce,selfrank,pipe,ifsorted)) == res_exp
+                        clearerrors!(pipe,selfrank)
+                        
+                        @fetchfrom p putselfchildren!(pipe,ifsorted,ranks...)
+                        @test value(reducedvalue(freduce,selfrank,pipe,ifsorted)) == res_exp
+                        clearerrors!(pipe,selfrank)
+                        
+                        putselfchildren!(pipe,ifsorted,ranks...)
+                        @test value(@fetchfrom p reducedvalue(freduce,selfrank,pipe,ifsorted)) == res_exp
+                        clearerrors!(pipe,selfrank)
+                    catch
+                        rethrow()
+                    end
+                end
+
+			    for n = 1:2
 			    	@testset "Unsorted" begin
-			            pipe = BranchChannel{Int,Int}(myid(),nchildren)
-			            res_exp = sum(0:nchildren)
+			            pipe = BranchChannel{Int,Int}(myid(),n)
+			            res_exp = sum(0:n)
 			            testreduction(sum,pipe,Unsorted(),res_exp,2)
-                        testreduction(sum,pipe,Unsorted(),res_exp,0)
+
+                        @testset "toptree" begin
+                            testreduction(sum,pipe,Unsorted(),res_exp,0)
+                        end
 			        end
 			    	@testset "Sorted" begin
-			            pipe = BranchChannel{pval,pval}(myid(),nchildren)
-			            res_exp = collect(1:nchildren+1)
+			            pipe = BranchChannel{pval,pval}(myid(),n)
+			            res_exp = collect(1:n+1)
 			            testreduction(x->vcat(x...),pipe,Sorted(),res_exp)
 			    
-			            pipe = BranchChannel{pval,pval}(myid(),nchildren)
-			            res_exp = sum(1:nchildren+1)
+			            pipe = BranchChannel{pval,pval}(myid(),n)
+			            res_exp = sum(1:n+1)
 			            testreduction(sum,pipe,Sorted(),res_exp)
+
+                        @testset "toptree" begin
+                            pipe = BranchChannel{pval,pval}(myid(),n)
+                            res_exp = n == 1 ? [1] : [1,3]
+                            testreduction(x->vcat(x...),pipe,Sorted(),res_exp,0,1,2)
+                    
+                            pipe = BranchChannel{pval,pval}(myid(),n)
+                            res_exp = n == 1 ? 1 : 1+3
+                            testreduction(sum,pipe,Sorted(),res_exp,0,1,2)
+                        end
 			    	end
 			    end
-
-                # The top tree must have children by definition
-                pipe = BranchChannel{Int,Int}(myid(),0)
-                putselfchildren!(pipe,Unsorted(),0)
-                err = ErrorException("nodes with rank <=0 must have children")
-                @test_throws err reducedvalue(sum,0,pipe,Unsorted())
-                clearerrors!(pipe,0)
 			end
 
 			@testset "reduceTreeNode" begin
@@ -1585,6 +1669,13 @@ end;
 			            testreduction(sum,pipe,Sorted(),res_exp)
 			    	end
 			    end
+
+                # The top tree must have children by definition
+                pipe = BranchChannel{Int,Int}(myid(),0)
+                putselfchildren!(pipe,Unsorted(),0)
+                err = ErrorException("nodes with rank <=0 must have children")
+                @test_throws err reducedvalue(sum,0,pipe,Unsorted())
+                clearerrors!(pipe,0)
 		    end
 		end;
 
