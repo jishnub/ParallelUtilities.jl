@@ -1032,13 +1032,29 @@ end;
 	        @test rc.out.where == myid()
 	        @test rc.err.where == myid()
 	        @test eltype(rc) == Int
-	        for (ind,p) in enumerate(workers())
-                showworkernumber(ind,nworkers)
-    	        rc = ParallelUtilities.RemoteChannelContainer{Int}(1,p)
-    	        @test rc.out.where == p
-    	        @test rc.err.where == p
-    	        @test eltype(rc) == Int
-    	    end
+
+            c = Channel(nworkers())
+            tasks = Vector{Task}(undef,nworkers())
+            @sync begin
+                for (ind,p) in enumerate(workers())
+                    tasks[ind] = @async begin
+                        try
+                            rc = ParallelUtilities.RemoteChannelContainer{Int}(1,p)
+                            res = (rc.out.where,rc.err.where,eltype(rc))
+                            put!(c,(ind,p,res,false))
+                        catch
+                            put!(c,(ind,p,(),true))
+                            rethrow()
+                        end
+                    end
+                end
+                for i = 1:nworkers()
+                    ind,p,res,err = take!(c)
+                    err && wait(tasks[ind])
+                    @test res == (p,p,Int)
+                    showworkernumber(i,nworkers())
+                end
+            end
 
 	        rc = ParallelUtilities.RemoteChannelContainer{Int}(1)
 	        @test rc.out.where == myid()
@@ -1050,12 +1066,28 @@ end;
 	        @test rc.err.where == myid()
 	        @test eltype(rc) == Any
 
-	        for p in workers()
-    	        rc = ParallelUtilities.RemoteChannelContainer(1,p)
-    	        @test rc.out.where == p
-    	        @test rc.err.where == p
-    	        @test eltype(rc) == Any
-    	    end
+            c = Channel(nworkers())
+            tasks = Vector{Task}(undef,nworkers())
+            @sync begin
+                for (ind,p) in enumerate(workers())
+                    tasks[ind] = @async begin
+                        try
+                            rc = ParallelUtilities.RemoteChannelContainer(1,p)
+                            res = (rc.out.where,rc.err.where,eltype(rc))
+                            put!(c,(ind,p,res,false))
+                        catch
+                            put!(c,(ind,p,(),true))
+                            rethrow()
+                        end
+                    end
+                end
+                for i = 1:nworkers()
+                    ind,p,res,err = take!(c)
+                    err && wait(tasks[ind])
+                    @test res == (p,p,Any)
+                    showworkernumber(i,nworkers())
+                end
+            end
 
 	        rc = ParallelUtilities.RemoteChannelContainer(1)
 	        @test rc.out.where == myid()
@@ -1079,15 +1111,30 @@ end;
             @testset "rc on where" begin
                 # Create on this processor
                 rc = ParallelUtilities.RemoteChannelContainer{Int}(1)
-                for (ind,p) in enumerate(workers())
-                    showworkernumber(ind,nworkers())
-                    rcoutw,rcerrw = @fetchfrom p begin 
-                        ParallelUtilities.finalize_except_wherewhence(rc)
-                        rc.out.where,rc.err.where
+                c = Channel(nworkers())
+                tasks = Vector{Task}(undef,nworkers())
+                @sync begin
+                    for (ind,p) in enumerate(workers())
+                        tasks[ind] = @async begin
+                            try
+                                rcoutw,rcerrw = @fetchfrom p begin 
+                                    ParallelUtilities.finalize_except_wherewhence(rc)
+                                    rc.out.where,rc.err.where
+                                end
+                                res = (rc.out.where,rc.err.where,rcoutw,rcerrw)
+                                put!(c,(ind,res,false))
+                            catch
+                                put!(c,(ind,(),true))
+                                rethrow()
+                            end
+                        end
                     end
-                    @test rc.out.where == myid()
-                    @test rc.err.where == myid()
-                    @test (rcoutw,rcerrw) == (0,0)
+                    for i = 1:nworkers()
+                        ind,res,err = take!(c)
+                        err && wait(tasks[ind])
+                        @test res == (myid(),myid(),0,0)
+                        showworkernumber(i,nworkers())
+                    end
                 end
             end
 
@@ -1095,16 +1142,32 @@ end;
                 # Create elsewhere
                 p_rc = workers()[1]
                 rc = ParallelUtilities.RemoteChannelContainer{Int}(1,p_rc)
-                for (ind,p) in enumerate(procs())
-                    showworkernumber(ind,nprocs())
-                    rcw = @fetchfrom p begin 
-                        ParallelUtilities.finalize_except_wherewhence(rc)
-                        (rc.out.where,rc.err.where)
+                c = Channel(nprocs())
+                tasks = Vector{Task}(undef,nprocs())
+                @sync begin
+                    for (ind,p) in enumerate(procs())
+                        tasks[ind] = @async begin
+                            try
+                                rcw = @fetchfrom p begin
+                                    ParallelUtilities.finalize_except_wherewhence(rc)
+                                    (rc.out.where,rc.err.where)
+                                end
+                                put!(c,(ind,p,rcw,false))
+                            catch
+                                put!(c,(ind,p,(),true))
+                                rethrow()
+                            end
+                        end
                     end
-                    if p != myid() && p != p_rc
-                        @test rcw == (0,0)
-                    else
-                        @test rcw == (p_rc,p_rc)
+                    for i = 1:nworkers()
+                        ind,p,res,err = take!(c)
+                        err && wait(tasks[ind])
+                        if p != myid() && p != p_rc
+                            @test res == (0,0)
+                        else
+                            @test res == (p_rc,p_rc)
+                        end
+                        showworkernumber(i,nworkers())
                     end
                 end
             end
@@ -1795,12 +1858,28 @@ end;
 		    
 		    @testsetwithinfo "run elsewhere" begin
 		    	res_exp = sum(workers())
-		    	for (ind,p) in enumerate(workers())
-                    showworkernumber(ind,nworkers())
-		    		res = @fetchfrom p pmapsum(x->myid(),1:nworkers())
-		        	@test res == res_exp
-		        end
-		    end
+                c = Channel{Tuple{Int,Int,Bool}}(nworkers())
+                tasks = Vector{Task}(undef,nworkers())
+                @sync begin 
+                    for (ind,p) in enumerate(workers())
+                        tasks[ind] = @async begin
+                            try
+                                res = @fetchfrom p pmapsum(x->myid(),1:nworkers())
+                                put!(c,(ind,res,false))
+                            catch
+                                put!(c,(ind,0,true))
+                                rethrow()
+                            end
+                        end
+                    end
+                    for i = 1:nworkers()
+                        ind,res,err = take!(c)
+                        err && wait(tasks[ind])
+                        @test res == res_exp
+                        showworkernumber(i,nworkers())
+                    end
+                end
+		    end;
 
 		    @testset "errors" begin
 		        @test_throws exceptiontype pmapsum(x->error("map"),1:10)
@@ -1835,12 +1914,28 @@ end;
 			@testset "run elsewhere" begin
 				iterable = 1:100
 				res_exp = sum(iterable)
-		    	for (ind,p) in enumerate(workers())
-                    showworkernumber(ind,nworkers())
-		    		res = @fetchfrom p pmapsum_elementwise(identity,iterable)
-		        	@test res == res_exp
-		        end
-		    end
+                c = Channel{Tuple{Int,Int,Bool}}(nworkers())
+                tasks = Vector{Task}(undef,nworkers())
+                @sync begin 
+                    for (ind,p) in enumerate(workers())
+                        tasks[ind] = @async begin
+                            try
+                                res = @fetchfrom p pmapsum_elementwise(identity,iterable)
+                                put!(c,(ind,res,false))
+                            catch
+                                put!(c,(ind,0,true))
+                                rethrow()
+                            end
+                        end
+                    end
+                    for i = 1:nworkers()
+                        ind,res,err = take!(c)
+                        err && wait(tasks[ind])
+                        @test res == res_exp
+                        showworkernumber(i,nworkers())
+                    end
+                end
+		    end;
 
 		    @testset "errors" begin
 		        @test_throws exceptiontype pmapsum_elementwise(x->error("hi"),1:10)
@@ -1883,11 +1978,27 @@ end;
 
 		    @testsetwithinfo "run elsewhere" begin
 		    	res_exp = prod(workers())
-		    	for (ind,p) in enumerate(workers())
-                    showworkernumber(ind,nworkers())
-		    		res = @fetchfrom p pmapreduce_commutative(x->myid(),prod,1:nworkers())
-		        	@test res == res_exp
-		        end
+                c = Channel{Tuple{Int,Int,Bool}}(nworkers())
+                tasks = Vector{Task}(undef,nworkers())
+                @sync begin 
+                    for (ind,p) in enumerate(workers())
+                        tasks[ind] = @async begin
+                            try
+                                res = @fetchfrom p pmapreduce_commutative(x->myid(),prod,1:nworkers())
+                                put!(c,(ind,res,false))
+                            catch
+                                put!(c,(ind,0,true))
+                                rethrow()
+                            end
+                        end
+                    end
+                    for i = 1:nworkers()
+                        ind,res,err = take!(c)
+                        err && wait(tasks[ind])
+                        @test res == res_exp
+                        showworkernumber(i,nworkers())
+                    end
+                end
 		    end
 
 		    @testset "errors" begin
@@ -1941,11 +2052,27 @@ end;
 			@testsetwithinfo "run elsewhere" begin
 				iter = 1:1000
 				res_exp = sum(x->x^2,iter)
-		    	for (ind,p) in enumerate(workers())
-                    showworkernumber(ind,nworkers())
-		    		res = @fetchfrom p pmapreduce_commutative_elementwise(x->x^2,sum,iter)
-		        	@test res == res_exp
-		        end
+                c = Channel{Tuple{Int,Int,Bool}}(nworkers())
+                tasks = Vector{Task}(undef,nworkers())
+                @sync begin 
+                    for (ind,p) in enumerate(workers())
+                        tasks[ind] = @async begin
+                            try
+                                res = @fetchfrom p pmapreduce_commutative_elementwise(x->x^2,sum,iter)
+                                put!(c,(ind,res,false))
+                            catch
+                                put!(c,(ind,0,true))
+                                rethrow()
+                            end
+                        end
+                    end
+                    for i = 1:nworkers()
+                        ind,res,err = take!(c)
+                        err && wait(tasks[ind])
+                        @test res == res_exp
+                        showworkernumber(i,nworkers())
+                    end
+                end
 		    end
 
 			@testsetwithinfo "errors" begin
@@ -2009,20 +2136,52 @@ end;
 			@testsetwithinfo "run elsewhere" begin
                 @testsetwithinfo "sum" begin
     				res_exp = sum(workers())
-    		    	for (ind,p) in enumerate(workers())
-                        showworkernumber(ind,nworkers())
-    		    		res = @fetchfrom p pmapreduce(x->myid(),sum,1:nworkers())
-    		        	@test res == res_exp
-    		        end
+                    c = Channel{Tuple{Int,Int,Bool}}(nworkers())
+                    tasks = Vector{Task}(undef,nworkers())
+                    @sync begin 
+                        for (ind,p) in enumerate(workers())
+                            tasks[ind] = @async begin
+                                try
+                                    res = @fetchfrom p pmapreduce(x->myid(),sum,1:nworkers())
+                                    put!(c,(ind,res,false))
+                                catch
+                                    put!(c,(ind,0,true))
+                                    rethrow()
+                                end
+                            end
+                        end
+                        for i = 1:nworkers()
+                            ind,res,err = take!(c)
+                            err && wait(tasks[ind])
+                            @test res == res_exp
+                            showworkernumber(i,nworkers())
+                        end
+                    end
                 end
                 # concatenation where the rank is used in the mapping function
                 # Preserves order of the iterators
                 @testsetwithinfo "concatenation using rank" begin
                     res_exp = collect(1:nworkers())
-                    for (ind,p) in enumerate(workers())
-                        showworkernumber(ind,nworkers())
-                        res = @fetchfrom p pmapreduce(x->x[1][1],x->vcat(x...),1:nworkers())
-                        @test res == res_exp
+                    c = Channel{Tuple{Int,Vector{Int},Bool}}(nworkers())
+                    tasks = Vector{Task}(undef,nworkers())
+                    @sync begin 
+                        for (ind,p) in enumerate(workers())
+                            tasks[ind] = @async begin
+                                try
+                                    res = @fetchfrom p pmapreduce(x->x[1][1],x->vcat(x...),1:nworkers())
+                                    put!(c,(ind,res,false))
+                                catch
+                                    put!(c,(ind,Int[],true))
+                                    rethrow()
+                                end
+                            end
+                        end
+                        for i = 1:nworkers()
+                            ind,res,err = take!(c)
+                            err && wait(tasks[ind])
+                            @test res == res_exp
+                            showworkernumber(i,nworkers())
+                        end
                     end
                 end
 		    end;
