@@ -1,3 +1,6 @@
+abstract type AbstractConstrainedProduct{T,N} end
+Base.eltype(::AbstractConstrainedProduct{T}) where {T} = T
+
 """
 	ProductSplit{T,N,Q}
 
@@ -6,8 +9,10 @@ reverse-lexicographic order. The ranges need to be strictly
 increasing. Given `N` ranges, 
 each element returned by the iterator will be 
 a tuple of length `N` with one element from each range.
+
+See also: [`ProductSection`](@ref)
 """
-struct ProductSplit{T,N,Q}
+struct ProductSplit{T,N,Q} <: AbstractConstrainedProduct{T,N}
 	iterators :: Q
 	togglelevels :: NTuple{N,Int}
 	np :: Int
@@ -23,12 +28,44 @@ struct ProductSplit{T,N,Q}
 		Q = typeof(iterators)
 
 		# Ensure that all the iterators are strictly increasing
-		all(x->step(x)>0,iterators) || throw(DecreasingIteratorError())
+		all(x->step(x)>0,iterators) || 
+		throw(ArgumentError("all the iterators need to be strictly increasing"))
 
 		new{T,N,Q}(iterators,togglelevels,np,p,firstind,lastind)
 	end
 end
-Base.eltype(::ProductSplit{T}) where {T} = T
+
+"""
+	ProductSection{T,N,Q}
+
+Iterator that loops over a specified section of the 
+outer product of the ranges provided in 
+reverse-lexicographic order. The ranges need to be strictly
+increasing. Given `N` ranges, 
+each element returned by the iterator will be 
+a tuple of length `N` with one element from each range.
+
+See also: [`ProductSplit`](@ref)
+"""
+struct ProductSection{T,N,Q} <: AbstractConstrainedProduct{T,N}
+	iterators :: Q
+	togglelevels :: NTuple{N,Int}
+	firstind :: Int
+	lastind :: Int
+
+	function ProductSection(iterators::Tuple{Vararg{AbstractRange,N}},togglelevels::NTuple{N,Int},
+		firstind::Int,lastind::Int) where {N}
+
+		T = Tuple{eltype.(iterators)...}
+		Q = typeof(iterators)
+
+		# Ensure that all the iterators are strictly increasing
+		all(x->step(x)>0,iterators) || 
+		throw(ArgumentError("all the iterators need to be strictly increasing"))
+
+		new{T,N,Q}(iterators,togglelevels,firstind,lastind)
+	end
+end
 
 function mwerepr(ps::ProductSplit)
 	"ProductSplit("*repr(ps.iterators)*","*repr(ps.np)*","*repr(ps.p)*")"
@@ -41,8 +78,8 @@ function _cumprod(len::Tuple)
 	(0,_cumprod(first(len),Base.tail(len))...)
 end
 
-@inline _cumprod(::Int,::Tuple{}) = ()
-function _cumprod(n::Int,tl::Tuple)
+@inline _cumprod(::Integer,::Tuple{}) = ()
+function _cumprod(n::Integer, tl::Tuple)
 	(n,_cumprod(n*first(tl),Base.tail(tl))...)
 end
 
@@ -53,10 +90,10 @@ The total number of elements in the outer product of the ranges contained in
 `iterators`, equal to `prod(length.(iterators))`
 """
 @inline ntasks(iterators::Tuple) = mapreduce(length,*,iterators)
-@inline ntasks(ps::ProductSplit) = ntasks(ps.iterators)
+@inline ntasks(ps::AbstractConstrainedProduct) = ntasks(ps.iterators)
 
 """
-	ProductSplit(iterators, np::Int, p::Int)
+	ProductSplit(iterators::Tuple{Vararg{AbstractRange}}, np::Integer, p::Integer)
 
 Construct a `ProductSplit` iterator that represents the outer product 
 of the iterators split over `np` workers, with this instance reprsenting 
@@ -75,7 +112,7 @@ julia> ProductSplit((1:2,4:5), 2, 2) |> collect
  (2, 5)
 ```
 """
-function ProductSplit(iterators::Tuple{Vararg{AbstractRange}},np::Int,p::Int)
+function ProductSplit(iterators::Tuple{Vararg{AbstractRange}},np::Integer,p::Integer)
 	len = size.(iterators,1)
 	Nel = prod(len)
 	togglelevels = _cumprod(len)
@@ -84,52 +121,134 @@ function ProductSplit(iterators::Tuple{Vararg{AbstractRange}},np::Int,p::Int)
 	lastind = d*p + min(r,p)
 	ProductSplit(iterators,togglelevels,np,p,firstind,lastind)
 end
-ProductSplit(::Tuple{},::Int,::Int) = throw(ArgumentError("Need at least one iterator"))
+ProductSplit(::Tuple{},::Integer,::Integer) = throw(ArgumentError("Need at least one iterator"))
 
-Base.isempty(ps::ProductSplit) = (ps.firstind > ps.lastind)
+"""
+	ProductSection(iterators::Tuple{Vararg{AbstractRange}}, inds::AbstractUnitRange)
 
-@inline Base.@propagate_inbounds function Base.first(ps::ProductSplit)
+Construct a `ProductSection` iterator that represents a view of the outer product
+of the ranges provided in `iterators`, with the range of indices in the view being
+specified by `inds`.
+
+# Examples
+```jldoctest
+julia> ProductSection((1:3,4:6), 5:8) |> collect
+4-element Array{Tuple{Int64,Int64},1}:
+ (2, 5)
+ (3, 5)
+ (1, 6)
+ (2, 6)
+
+julia> collect(ProductSection((1:3,4:6), 5:8)) == collect(Iterators.product(1:3,4:6))[5:8]
+true
+```
+"""
+function ProductSection(iterators::Tuple{Vararg{AbstractRange}},
+	inds::AbstractUnitRange)
+
+	isempty(inds) && throw(ArgumentError("range of indices must not be empty"))
+	firstind,lastind = extrema(inds)
+
+	len = size.(iterators,1)
+	Nel = prod(len)
+	1 <= firstind || throw(
+		ArgumentError("the range of indices must start from a number ≥ 1"))
+	lastind <= Nel || throw(
+		ArgumentError("the maximum index must be less than or equal to the total number of elements = $Nel"))
+	togglelevels = _cumprod(len)
+	ProductSection(iterators,togglelevels,firstind,lastind)
+end
+function ProductSection(::Tuple{},::AbstractUnitRange)
+	throw(ArgumentError("Need at least one iterator"))
+end
+
+Base.isempty(ps::AbstractConstrainedProduct) = (ps.firstind > ps.lastind)
+
+@inline Base.@propagate_inbounds function Base.first(ps::AbstractConstrainedProduct)
 	isempty(ps) ? nothing : _first(ps.iterators,childindex(ps,ps.firstind)...)
 end
 
-@inline Base.@propagate_inbounds function _first(t::Tuple,ind::Int,rest::Int...)
+@inline Base.@propagate_inbounds function _first(t::Tuple,ind::Integer,rest::Integer...)
 	@boundscheck (1 <= ind <= length(first(t))) || throw(BoundsError(first(t),ind))
 	(@inbounds first(t)[ind],_first(Base.tail(t),rest...)...)
 end
 @inline _first(::Tuple{}) = ()
 
-@inline Base.@propagate_inbounds function Base.last(ps::ProductSplit)
+@inline Base.@propagate_inbounds function Base.last(ps::AbstractConstrainedProduct)
 	isempty(ps) ? nothing : _last(ps.iterators,childindex(ps,ps.lastind)...)
 end
 
-@inline Base.@propagate_inbounds function _last(t::Tuple,ind::Int,rest::Int...)
+@inline Base.@propagate_inbounds function _last(t::Tuple,ind::Integer,rest::Integer...)
 	@boundscheck (1 <= ind <= length(first(t))) || throw(BoundsError(first(t),ind))
 	(@inbounds first(t)[ind],_last(Base.tail(t),rest...)...)
 end
 @inline _last(::Tuple{}) = ()
 
-@inline Base.length(ps::ProductSplit) = ps.lastind - ps.firstind + 1
+@inline Base.length(ps::AbstractConstrainedProduct) = ps.lastind - ps.firstind + 1
 
-@inline Base.firstindex(ps::ProductSplit) = 1
-@inline Base.lastindex(ps::ProductSplit) = ps.lastind - ps.firstind + 1
+@inline Base.firstindex(ps::AbstractConstrainedProduct) = 1
+@inline Base.lastindex(ps::AbstractConstrainedProduct) = ps.lastind - ps.firstind + 1
 
-@inline function childindex(ps::ProductSplit,ind::Int)
+"""
+	childindex(ps::AbstractConstrainedProduct, ind)
+
+Return a tuple containing the indices of the individual iterators 
+corresponding to the element that is present at index `ind` in the 
+outer product of the iterators.
+
+# Examples
+```jldoctest
+julia> ps = ProductSplit((1:5,2:4,1:3),7,1);
+
+julia> childindex(ps, 6)
+(1, 2, 1)
+
+julia> v = collect(Iterators.product(1:5, 2:4, 1:3));
+
+julia> getindex.(ps.iterators, childindex(ps,6)) == v[6]
+true
+```
+
+See also: [`childindexshifted`](@ref)
+"""
+@inline function childindex(ps::AbstractConstrainedProduct, ind)
 	tl = reverse(Base.tail(ps.togglelevels))
 	reverse(childindex(tl,ind))
 end
 
-@inline function childindex(tl::Tuple,ind::Int)
+@inline function childindex(tl::Tuple, ind)
 	t = first(tl)
 	k = div(ind-1,t)
 	(k+1,childindex(Base.tail(tl),ind-k*t)...)
 end
 
 # First iterator gets the final remainder
-@inline childindex(::Tuple{},ind::Int) = (ind,)
+@inline childindex(::Tuple{}, ind) = (ind,)
 
-@inline childindexshifted(ps::ProductSplit,ind::Int) = childindex(ps, (ind - 1) + ps.firstind)
+"""
+	childindexshifted(ps::AbstractConstrainedProduct, ind)
 
-@inline Base.@propagate_inbounds function Base.getindex(ps::ProductSplit,ind::Int)
+Return a tuple containing the indices in the individual iterators 
+given an index of a `AbstractConstrainedProduct`.
+
+# Examples
+```jldoctest
+julia> ps = ProductSplit((1:5,2:4,1:3), 7, 3);
+
+julia> childindexshifted(ps,3)
+(2, 1, 2)
+
+julia> getindex.(ps.iterators,childindexshifted(ps,3)) == ps[3]
+true
+```
+
+See also: [`childindex`](@ref)
+"""
+@inline function childindexshifted(ps::AbstractConstrainedProduct, ind)
+	childindex(ps, (ind - 1) + ps.firstind)
+end
+
+@inline Base.@propagate_inbounds function Base.getindex(ps::AbstractConstrainedProduct, ind)
 	@boundscheck 1 <= ind <= length(ps) || throw(BoundsError(ps,ind))
 	_getindex(ps,childindexshifted(ps, ind)...)
 end
@@ -137,19 +256,19 @@ end
 # it's not clear if the single index is for the ProductSplit or the child iterator
 
 # This method asserts that the number of indices is correct
-@inline Base.@propagate_inbounds function _getindex(ps::ProductSplit{<:Any,N},
-	inds::Vararg{Int,N}) where {N}
+@inline Base.@propagate_inbounds function _getindex(ps::AbstractConstrainedProduct{<:Any,N},
+	inds::Vararg{Integer,N}) where {N}
 	
 	_getindex(ps.iterators,inds...)
 end
 
-@inline function _getindex(t::Tuple,ind::Int,rest::Int...)
+@inline function _getindex(t::Tuple,ind::Integer,rest::Integer...)
 	@boundscheck (1 <= ind <= length(first(t))) || throw(BoundsError(first(t),ind))
 	(@inbounds first(t)[ind],_getindex(Base.tail(t),rest...)...)
 end
-@inline _getindex(::Tuple{},rest::Int...) = ()
+@inline _getindex(::Tuple{},::Integer...) = ()
 
-function Base.iterate(ps::ProductSplit{T},state=(first(ps),1)) where {T}
+function Base.iterate(ps::AbstractConstrainedProduct{T},state=(first(ps),1)) where {T}
 	el,n = state
 
 	if n > length(ps)
@@ -164,14 +283,14 @@ function Base.iterate(ps::ProductSplit{T},state=(first(ps),1)) where {T}
 	(el::T,next_state)
 end
 
-@inline Base.@propagate_inbounds function _firstlastalongdim(ps::ProductSplit{<:Any,N},dim::Int,
+@inline Base.@propagate_inbounds function _firstlastalongdim(ps::AbstractConstrainedProduct{<:Any,N},dim,
 	firstindchild::Tuple=childindex(ps,ps.firstind),
 	lastindchild::Tuple=childindex(ps,ps.lastind)) where {N}
 
 	_firstlastalongdim(ps.iterators,dim,firstindchild,lastindchild)
 end
 
-@inline Base.@propagate_inbounds function _firstlastalongdim(iterators::Tuple{Vararg{Any,N}},dim::Int,
+@inline Base.@propagate_inbounds function _firstlastalongdim(iterators::Tuple{Vararg{Any,N}},dim,
 	firstindchild::Tuple,lastindchild::Tuple) where {N}
 
 	@boundscheck (1 <= dim <= N) || throw(BoundsError(iterators,dim))
@@ -187,14 +306,14 @@ end
 	(first_iter,last_iter)
 end
 
-function _checkrollover(ps::ProductSplit{<:Any,N},dim::Int,
+function _checkrollover(ps::AbstractConstrainedProduct{<:Any,N},dim,
 	firstindchild::Tuple=childindex(ps,ps.firstind),
 	lastindchild::Tuple=childindex(ps,ps.lastind)) where {N}
 
 	_checkrollover(ps.iterators,dim,firstindchild,lastindchild)
 end
 
-function _checkrollover(t::Tuple{Vararg{Any,N}},dim::Int,
+function _checkrollover(t::Tuple{Vararg{Any,N}},dim,
 	firstindchild::Tuple,lastindchild::Tuple) where {N}
 
 	if dim > 0
@@ -214,16 +333,8 @@ function _checknorollover(t,firstindchild,lastindchild)
 end
 _checknorollover(::Tuple{},::Tuple{},::Tuple{}) = true
 
-@inline function Base.maximum(ps::ProductSplit{<:Any,1})
-	isempty(ps) && return nothing
-	lastindchild = childindex(ps,ps.lastind)
-	@inbounds lic_dim = lastindchild[1]
-	@inbounds iter = ps.iterators[1]
-	iter[lic_dim]
-end
-
 """
-	maximum(ps::ProductSplit; dim::Int)
+	maximum(ps::ProductSplit; dim::Integer)
 
 Compute the maximum value of the range number `dim` that is
 contained in `ps`.
@@ -244,7 +355,7 @@ julia> maximum(ps,dim=2)
 4
 ```
 """
-@inline function Base.maximum(ps::ProductSplit{<:Any,N};dim::Int) where {N}
+function Base.maximum(ps::AbstractConstrainedProduct{<:Any,N};dim::Integer) where {N}
 
 	@boundscheck (1 <= dim <= N) || throw(BoundsError(ps.iterators,dim))
 
@@ -270,16 +381,16 @@ julia> maximum(ps,dim=2)
 	return v
 end
 
-@inline function Base.minimum(ps::ProductSplit{<:Any,1})
+function Base.maximum(ps::AbstractConstrainedProduct{<:Any,1})
 	isempty(ps) && return nothing
-	firstindchild = childindex(ps,ps.firstind)
-	@inbounds fic_dim = firstindchild[1]
+	lastindchild = childindex(ps,ps.lastind)
+	@inbounds lic_dim = lastindchild[1]
 	@inbounds iter = ps.iterators[1]
-	iter[fic_dim]
+	iter[lic_dim]
 end
 
 """
-	minimum(ps::ProductSplit; dim::Int)
+	minimum(ps::ProductSplit; dim::Integer)
 
 Compute the minimum value of the range number `dim` that is
 contained in `ps`.
@@ -300,7 +411,7 @@ julia> minimum(ps,dim=2)
 4
 ```
 """
-@inline function Base.minimum(ps::ProductSplit{<:Any,N};dim::Int) where {N}
+function Base.minimum(ps::AbstractConstrainedProduct{<:Any,N};dim::Integer) where {N}
 	
 	@boundscheck (1 <= dim <= N) || throw(BoundsError(ps.iterators,dim))
 
@@ -326,19 +437,16 @@ julia> minimum(ps,dim=2)
 	return v
 end
 
-@inline function Base.extrema(ps::ProductSplit{<:Any,1})
+function Base.minimum(ps::AbstractConstrainedProduct{<:Any,1})
 	isempty(ps) && return nothing
 	firstindchild = childindex(ps,ps.firstind)
-	lastindchild = childindex(ps,ps.lastind)
 	@inbounds fic_dim = firstindchild[1]
-	@inbounds lic_dim = lastindchild[1]
 	@inbounds iter = ps.iterators[1]
-	
-	(iter[fic_dim],iter[lic_dim])
+	iter[fic_dim]
 end
 
 """
-	extrema(ps::ProductSplit; dim::Int)
+	extrema(ps::ProductSplit; dim::Integer)
 
 Compute the minimum and maximum of the range number `dim` that is
 contained in `ps`.
@@ -359,7 +467,7 @@ julia> extrema(ps,dim=2)
 (4, 4)
 ```
 """
-@inline function Base.extrema(ps::ProductSplit{<:Any,N};dim::Int) where {N}
+function Base.extrema(ps::AbstractConstrainedProduct{<:Any,N};dim::Integer) where {N}
 	
 	@boundscheck (1 <= dim <= N) || throw(BoundsError(ps.iterators,dim))
 
@@ -384,8 +492,19 @@ julia> extrema(ps,dim=2)
 	return v
 end
 
+function Base.extrema(ps::AbstractConstrainedProduct{<:Any,1})
+	isempty(ps) && return nothing
+	firstindchild = childindex(ps,ps.firstind)
+	lastindchild = childindex(ps,ps.lastind)
+	@inbounds fic_dim = firstindchild[1]
+	@inbounds lic_dim = lastindchild[1]
+	@inbounds iter = ps.iterators[1]
+	
+	(iter[fic_dim],iter[lic_dim])
+end
+
 """
-	extremadims(ps::ProductSplit)
+	extremadims(ps::AbstractConstrainedProduct)
 
 Compute the extrema of all the ranges contained in `ps`.
 
@@ -402,15 +521,15 @@ julia> extremadims(ps)
 ((1, 2), (4, 4))
 ```
 """
-extremadims(ps::ProductSplit) = _extremadims(ps,1,ps.iterators)
+extremadims(ps::AbstractConstrainedProduct) = _extremadims(ps,1,ps.iterators)
 
-function _extremadims(ps::ProductSplit,dim::Int,iterators::Tuple)
+function _extremadims(ps::AbstractConstrainedProduct,dim::Integer,iterators::Tuple)
 	(extrema(ps;dim=dim),_extremadims(ps,dim+1,Base.tail(iterators))...)
 end
-_extremadims(::ProductSplit,::Int,::Tuple{}) = ()
+_extremadims(::AbstractConstrainedProduct,::Integer,::Tuple{}) = ()
 
 """
-	extrema_commonlastdim(ps::ProductSplit)
+	extrema_commonlastdim(ps::AbstractConstrainedProduct)
 
 Return the reverse-lexicographic extrema of values taken from 
 ranges contained in `ps`, where the pairs of ranges are constructed 
@@ -437,7 +556,7 @@ julia> extrema_commonlastdim(ps)
 ([(1, 2), (6, 2)], [(3, 3), (5, 3)])
 ```
 """
-function extrema_commonlastdim(ps::ProductSplit{<:Any,N}) where {N}
+function extrema_commonlastdim(ps::AbstractConstrainedProduct{<:Any,N}) where {N}
 
 	isempty(ps) && return nothing
 	
@@ -468,12 +587,63 @@ function extrema_commonlastdim(ps::ProductSplit{<:Any,N}) where {N}
 	[(m,lastvar_min) for m in min_vals],[(m,lastvar_max) for m in max_vals]
 end
 
-_infullrange(val::T,ps::ProductSplit{T}) where {T} = _infullrange(val,ps.iterators)
+_infullrange(val::T,ps::AbstractConstrainedProduct{T}) where {T} = _infullrange(val,ps.iterators)
 
 function _infullrange(val,t::Tuple)
 	first(val) in first(t) && _infullrange(Base.tail(val),Base.tail(t))
 end
 @inline _infullrange(::Tuple{},::Tuple{}) = true
+
+function c2l_rec(iprev, nprev, ax, inds)
+	i = searchsortedfirst(ax[1],inds[1])
+	inew = iprev + (i-1)*nprev
+	n = nprev*length(ax[1])
+	c2l_rec(inew, n, Base.tail(ax), Base.tail(inds))
+end
+
+c2l_rec(i, n, ::Tuple{}, ::Tuple{}) = i
+
+_cartesiantolinear(ax, inds) = c2l_rec(1,1,ax,inds)
+
+"""
+	indexinproduct(iterators::Tuple{Vararg{AbstractRange,N}}, val::Tuple{Any,N}) where {N}
+
+Return the index of `val` in the outer product of `iterators`, 
+where `iterators` is a `Tuple` of increasing `AbstractRange`s. 
+Return nothing if `val` is not present.
+
+# Examples
+```jldoctest
+julia> iterators = (1:4, 1:3, 3:5);
+
+julia> val = (2, 2, 4);
+
+julia> ind = indexinproduct(iterators,val)
+18
+
+julia> collect(Iterators.product(iterators...))[ind] == val
+true
+```
+"""
+function indexinproduct(iterators::Tuple{Vararg{AbstractRange,N}},
+	val::Tuple{Vararg{Any,N}}) where {N}
+
+	all(in.(val,iterators)) || return nothing
+
+	ax = axes.(iterators,1)
+	individual_inds = searchsortedfirst.(iterators,val)
+
+	_cartesiantolinear(ax, individual_inds)
+end
+
+indexinproduct(::Tuple{},::Tuple) = throw(ArgumentError("need at least one iterator"))
+
+function Base.in(val::T, ps::AbstractConstrainedProduct{T}) where {T}
+	_infullrange(val,ps) || return false
+	
+	ind = indexinproduct(ps.iterators, val)
+	ps.firstind <= ind <= ps.lastind
+end
 
 # This struct is just a wrapper to flip the tuples before comparing
 struct ReverseLexicographicTuple{T}
@@ -482,16 +652,6 @@ end
 
 Base.isless(a::ReverseLexicographicTuple{T},b::ReverseLexicographicTuple{T}) where {T} = reverse(a.t) < reverse(b.t)
 Base.isequal(a::ReverseLexicographicTuple{T},b::ReverseLexicographicTuple{T}) where {T} = a.t == b.t
-
-function Base.in(val::T,ps::ProductSplit{T}) where {T}
-	_infullrange(val,ps) || return false
-	
-	val_lt = ReverseLexicographicTuple(val)
-	first_iter = ReverseLexicographicTuple(ps[1])
-	last_iter = ReverseLexicographicTuple(ps[end])
-
-	first_iter <= val_lt <= last_iter
-end
 
 """
 	whichproc(iterators::Tuple, val::Tuple, np::Integer )
@@ -527,7 +687,7 @@ function whichproc(iterators, val, np::Integer)
 	val_t = ReverseLexicographicTuple(val)
 
 	while left <= right
-		mid = floor(Int,(left+right)/2)
+		mid = div(left+right, 2)
 		ps = ProductSplit(iterators,np,mid)
 
 		# If np is greater than the number of ntasks then it's possible
@@ -571,7 +731,7 @@ julia> procrange_recast(iters, ps, 10)
 3:4
 ```
 """
-function procrange_recast(iterators::Tuple, ps::ProductSplit, np_new::Integer)
+function procrange_recast(iterators::Tuple, ps::AbstractConstrainedProduct, np_new::Integer)
 	
 	if isempty(ps)
 		return 0:-1 # empty range
@@ -593,7 +753,7 @@ function procrange_recast(iterators::Tuple, ps::ProductSplit, np_new::Integer)
 	return procid_start:procid_end
 end
 
-function procrange_recast(ps::ProductSplit, np_new::Integer)
+function procrange_recast(ps::AbstractConstrainedProduct, np_new::Integer)
 	procrange_recast(ps.iterators,ps,np_new)
 end
 
@@ -618,37 +778,19 @@ julia> localindex(ps,(3,9))
 2
 ```
 """
-function localindex(ps::ProductSplit{T},val::T) where {T}
-	# Can carry out a binary search
+function localindex(ps::AbstractConstrainedProduct{T},val::T) where {T}
 
 	(isempty(ps) || val ∉ ps) && return nothing
 
-	left,right = 1,length(ps)
-
-	val == first(ps) && return left
-	val == last(ps) && return right
-
-	val_t = ReverseLexicographicTuple(val)
-
-	while left <= right
-		mid = floor(Int,(left+right)/2)
-		val_mid = @inbounds ps[mid]
-
-		if val_t < ReverseLexicographicTuple(val_mid)
-			right = mid - 1
-		elseif val_t > ReverseLexicographicTuple(val_mid)
-			left = mid + 1
-		else
-			return mid
-		end
-	end
+	indflat = indexinproduct(ps.iterators, val)
+	indflat - ps.firstind + 1
 end
 
-localindex(::ProductSplit, ::Nothing) = nothing
+localindex(::AbstractConstrainedProduct, ::Nothing) = nothing
 
-function localindex(iterators::Tuple, val::Tuple, np::Integer,procid::Integer)
-	ps = ProductSplit(iterators,np,procid)
-	localindex(ps,val)
+function localindex(iterators::Tuple, val::Tuple, np::Integer, p::Integer)
+	ps = ProductSplit(iterators, np, p)
+	localindex(ps, val)
 end
 
 """
@@ -679,4 +821,44 @@ function whichproc_localindex(iterators::Tuple, val::Tuple, np::Integer)
 	procid = whichproc(iterators,val,np)
 	index = localindex(iterators,val,np,procid)
 	return procid,index
+end
+
+#################################################################
+
+"""
+	dropleading(ps::AbstractConstrainedProduct)
+
+Return a `ProductSection` leaving out the first iterator contained in `ps`. 
+The range of values of the remaining iterators in the 
+resulting `ProductSection` will be the same as in `ps`.
+
+# Examples
+```jldoctest
+julia> ps = ProductSplit((1:5,2:4,1:3),7,3);
+
+julia> collect(ps)
+7-element Array{Tuple{Int64,Int64,Int64},1}:
+ (5, 4, 1)
+ (1, 2, 2)
+ (2, 2, 2)
+ (3, 2, 2)
+ (4, 2, 2)
+ (5, 2, 2)
+ (1, 3, 2)
+
+julia> dropleading(ps) |> collect
+3-element Array{Tuple{Int64,Int64},1}:
+ (4, 1)
+ (2, 2)
+ (3, 2)
+```
+"""
+function dropleading(ps::AbstractConstrainedProduct)
+	isempty(ps) && throw(ArgumentError("need at least one iterator"))
+	iterators = Base.tail(ps.iterators)
+	first_element = Base.tail(first(ps))
+	last_element = Base.tail(last(ps))
+	firstind = indexinproduct(iterators, first_element)
+	lastind = indexinproduct(iterators, last_element)
+	ProductSection(iterators,firstind:lastind)
 end

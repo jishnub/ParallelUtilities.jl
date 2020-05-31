@@ -1,7 +1,6 @@
-using DataStructures
-using Test
-
 @everywhere begin
+    using DataStructures
+    using Test
     using ParallelUtilities
     import ParallelUtilities: BinaryTreeNode, RemoteChannelContainer, BranchChannel, 
 	Sorted, Unsorted, Ordering, pval, value, reducedvalue, reduceTreeNode, mapTreeNode,
@@ -9,7 +8,8 @@ using Test
     SegmentedOrderedBinaryTree,
     parentnoderank, nchildren,
     maybepvalput!, createbranchchannels, nworkersactive, workersactive,
-    procs_node, leafrankfoldedtree
+    procs_node, leafrankfoldedtree,
+    TopTreeNode, SubTreeNode, ProductSection, indexinproduct, dropleading
 end
 
 macro testsetwithinfo(str,ex)
@@ -28,355 +28,392 @@ function showworkernumber(ind,nw)
     print(endchar)
 end
 
-@testsetwithinfo "ProductSplit" begin
+@testsetwithinfo "AbstractConstrainedProduct" begin
 
-	various_iters = [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6),
-		    	(1:2,Base.OneTo(4),1:3:10)]
+    various_iters = [(1:10,),(1:10,4:6),(1:10,4:6,1:4),(1:2:10,4:1:6),
+                    (1:2,Base.OneTo(4),1:3:10),(1:0.5:3,2:4)]
 
-	function split_across_processors_iterators(arr::Iterators.ProductIterator,num_procs,proc_id)
+    @testsetwithinfo "ProductSplit" begin
 
-	    num_tasks = length(arr);
+    	function split_across_processors_iterators(arr::Iterators.ProductIterator,num_procs,proc_id)
 
-	    num_tasks_per_process,num_tasks_leftover = divrem(num_tasks,num_procs)
+    	    num_tasks = length(arr);
 
-	    num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
-	    task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover,proc_id-1) + 1;
+    	    num_tasks_per_process,num_tasks_leftover = divrem(num_tasks,num_procs)
 
-	    Iterators.take(Iterators.drop(arr,task_start-1),num_tasks_on_proc)
-	end
+    	    num_tasks_on_proc = num_tasks_per_process + (proc_id <= mod(num_tasks,num_procs) ? 1 : 0 );
+    	    task_start = num_tasks_per_process*(proc_id-1) + min(num_tasks_leftover,proc_id-1) + 1;
 
-	function split_product_across_processors_iterators(arrs_tuple,num_procs,proc_id)
-		split_across_processors_iterators(Iterators.product(arrs_tuple...),num_procs,proc_id)
-	end
-
-    @testset "Constructor" begin
-
-	    function checkPSconstructor(iters,npmax=10)
-	    	ntasks_total = prod(length.(iters))
-			for np = 1:npmax, p = 1:np
-		        ps = ProductSplit(iters,np,p)
-                @test eltype(ps) == Tuple{eltype.(iters)...}
-		        @test collect(ps) == collect(split_product_across_processors_iterators(iters,np,p))
-		        @test ntasks(ps) == ntasks_total
-		        @test ntasks(ps.iterators) == ntasks_total
-		        @test eltype(ps) == Tuple{map(eltype,iters)...}
-		    end
-
-		    @test_throws ParallelUtilities.ProcessorNumberError ProductSplit(iters,npmax,npmax+1)
-		end
-
-		@testset "0D" begin
-		    @test_throws ArgumentError ProductSplit((),2,1)
-		end
-
-		@testset "cumprod" begin
-		    @test ParallelUtilities._cumprod(1,()) == ()
-		    @test ParallelUtilities._cumprod(1,(2,)) == (1,)
-		    @test ParallelUtilities._cumprod(1,(2,3)) == (1,2)
-		    @test ParallelUtilities._cumprod(1,(2,3,4)) == (1,2,6)
-		end
-
-    	@testset "1D" begin
-	    	iters = (1:10,)
-	    	checkPSconstructor(iters)
-    	end
-    	@testset "2D" begin
-	    	iters = (1:10,4:6)
-	    	checkPSconstructor(iters)
-    	end
-    	@testset "3D" begin
-	    	iters = (1:10,4:6,1:4)
-	    	checkPSconstructor(iters)
-    	end
-    	@testset "steps" begin
-	    	iters = (1:2:10,4:1:6)
-	    	checkPSconstructor(iters)
-	    	iters = (10:-1:10,6:-2:0)
-	    	@test_throws ParallelUtilities.DecreasingIteratorError ProductSplit(iters,3,2)
-    	end
-    	@testset "mixed" begin
-    	    for iters in [(1:2,4:2:6),(1:2,Base.OneTo(4),1:3:10)]
-	    		checkPSconstructor(iters)
-	    	end
+    	    Iterators.take(Iterators.drop(arr,task_start-1),num_tasks_on_proc)
     	end
 
-    	@testset "empty" begin
-    	    iters = (1:1,)
-    	    ps = ProductSplit(iters,10,2)
-    	    @test isempty(ps)
-    	    @test length(ps) == 0
+    	function split_product_across_processors_iterators(arrs_tuple,num_procs,proc_id)
+    		split_across_processors_iterators(Iterators.product(arrs_tuple...),num_procs,proc_id)
     	end
 
-    	@testset "first and last ind" begin
-    	    for iters in [(1:10,),(1:2,Base.OneTo(4),1:3:10)]
-	    	    ps = ProductSplit(iters,2,1)
-	    	    @test firstindex(ps) == 1
-	    	    @test ps.firstind == 1
-	    	    @test ps.lastind == div(ntasks(iters),2)
-	    	    @test lastindex(ps) == div(ntasks(iters),2)
-	    	    @test lastindex(ps) == length(ps)
-	    	    ps = ProductSplit(iters,2,2)
-	    	    @test ps.firstind == div(ntasks(iters),2) + 1
-	    	    @test firstindex(ps) == 1
-	    	    @test ps.lastind == ntasks(iters)
-	    	    @test lastindex(ps) == length(ps)
+        @testset "Constructor" begin
 
-	    	    for np in ntasks(iters)+1:ntasks(iters)+10,
-	    	    	p in ntasks(iters)+1:np
+    	    function checkPSconstructor(iters,npmax=10)
+    	    	ntasks_total = prod(length.(iters))
+    			for np = 1:npmax, p = 1:np
+    		        ps = ProductSplit(iters,np,p)
+                    @test eltype(ps) == Tuple{eltype.(iters)...}
+    		        @test collect(ps) == collect(split_product_across_processors_iterators(iters,np,p))
+    		        @test ntasks(ps) == ntasks_total
+    		        @test ntasks(ps.iterators) == ntasks_total
+    		        @test eltype(ps) == Tuple{map(eltype,iters)...}
+    		    end
 
-		    	    ps = ProductSplit(iters,np,p)
-		    	    @test ps.firstind == ntasks(iters) + 1
-		    	    @test ps.lastind == ntasks(iters)
-		    	end
-		    end
-    	end
+    		    @test_throws ParallelUtilities.ProcessorNumberError ProductSplit(iters,npmax,npmax+1)
+    		end
 
-        @testset "summary" begin
-            ps = ProductSplit((1:3, 4:5:19),3,2)
-            reprstr = "ProductSplit("*repr((1:3, 4:5:19))*",3,2)"
-            @test ParallelUtilities.mwerepr(ps) == reprstr
+    		@testset "0D" begin
+    		    @test_throws ArgumentError ProductSplit((),2,1)
+    		end
 
-            summarystr = "$(length(ps))-element "*reprstr
-            @test ParallelUtilities.summary(ps) == summarystr
+    		@testset "cumprod" begin
+    		    @test ParallelUtilities._cumprod(1,()) == ()
+    		    @test ParallelUtilities._cumprod(1,(2,)) == (1,)
+    		    @test ParallelUtilities._cumprod(1,(2,3)) == (1,2)
+    		    @test ParallelUtilities._cumprod(1,(2,3,4)) == (1,2,6)
+    		end
 
-            io = IOBuffer()
-            summary(io,ps)
-            @test String(take!(io)) == summarystr
-        end
-    end
+        	@testset "1D" begin
+    	    	iters = (1:10,)
+    	    	checkPSconstructor(iters)
+        	end
+        	@testset "2D" begin
+    	    	iters = (1:10,4:6)
+    	    	checkPSconstructor(iters)
+        	end
+        	@testset "3D" begin
+    	    	iters = (1:10,4:6,1:4)
+    	    	checkPSconstructor(iters)
+        	end
+        	@testset "steps" begin
+    	    	iters = (1:2:10,4:1:6)
+    	    	checkPSconstructor(iters)
+    	    	iters = (10:-1:10,6:-2:0)
+    	    	@test_throws ArgumentError ProductSplit(iters,3,2)
+        	end
+        	@testset "mixed" begin
+        	    for iters in [(1:2,4:2:6),(1:2,Base.OneTo(4),1:3:10)]
+    	    		checkPSconstructor(iters)
+    	    	end
+        	end
 
-    @testset "firstlast" begin
-        @testset "first" begin
+        	@testset "empty" begin
+        	    iters = (1:1,)
+        	    ps = ProductSplit(iters,10,2)
+        	    @test isempty(ps)
+        	    @test length(ps) == 0
+        	end
 
-        	@test ParallelUtilities._first(()) == ()
+        	@testset "first and last ind" begin
+        	    for iters in [(1:10,),(1:2,Base.OneTo(4),1:3:10)]
+    	    	    ps = ProductSplit(iters,2,1)
+    	    	    @test firstindex(ps) == 1
+    	    	    @test ps.firstind == 1
+    	    	    @test ps.lastind == div(ntasks(iters),2)
+    	    	    @test lastindex(ps) == div(ntasks(iters),2)
+    	    	    @test lastindex(ps) == length(ps)
+    	    	    ps = ProductSplit(iters,2,2)
+    	    	    @test ps.firstind == div(ntasks(iters),2) + 1
+    	    	    @test firstindex(ps) == 1
+    	    	    @test ps.lastind == ntasks(iters)
+    	    	    @test lastindex(ps) == length(ps)
 
-            for iters in various_iters,np=1:5ntasks(iters)
+    	    	    for np in ntasks(iters)+1:ntasks(iters)+10,
+    	    	    	p in ntasks(iters)+1:np
 
-	            ps = ProductSplit(iters,np,1)
-	            @test first(ps) == ( isempty(ps) ? nothing : map(first,iters) )
-	        end
+    		    	    ps = ProductSplit(iters,np,p)
+    		    	    @test ps.firstind == ntasks(iters) + 1
+    		    	    @test ps.lastind == ntasks(iters)
+    		    	end
+    		    end
+        	end
 
-	        iters = (1:1,)
-	        ps = ProductSplit(iters,2ntasks(iters),ntasks(iters)+1) # must be empty
-	        @test first(ps) === nothing
-        end
-        @testset "last" begin
+            @testset "summary" begin
+                ps = ProductSplit((1:3, 4:5:19),3,2)
+                reprstr = "ProductSplit("*repr((1:3, 4:5:19))*",3,2)"
+                @test ParallelUtilities.mwerepr(ps) == reprstr
 
-        	@test ParallelUtilities._last(()) == ()
+                summarystr = "$(length(ps))-element "*reprstr
+                @test ParallelUtilities.summary(ps) == summarystr
 
-            for iters in various_iters,np=1:5ntasks(iters)
-
-	            ps = ProductSplit(iters,np,np)
-	            @test last(ps) == ( isempty(ps) ? nothing : map(last,iters) )
-	        end
-
-	        iters = (1:1,)
-	        ps = ProductSplit(iters,2length(iters[1]),length(iters[1])+1) # must be empty
-	        @test last(ps) === nothing
-        end
-    end
-
-    @testset "extrema" begin
-
-    	@testset "min max extrema" begin
-	    	function checkPSextrema(iters,fn::Function,npmax=10)
-				for np = 1:npmax, p = 1:np
-			        ps = ProductSplit(iters,np,p)
-			        pcol = collect(ps)
-			        for dim in 1:length(iters)
-			        	@test begin
-			        		res = fn(ps,dim=dim) == fn(x[dim] for x in pcol)
-			        		if !res
-			        			println(summary(ps))
-			        		end
-			        		res
-			        	end
-			        end
-			    end
-			end
-
-		    for iters in various_iters,	fn in [maximum,minimum,extrema]
-		        checkPSextrema(iters,fn)
-		    end
-
-            @test minimum(ProductSplit((1:5,),2,1)) == 1
-            @test maximum(ProductSplit((1:5,),2,1)) == 3
-            @test extrema(ProductSplit((1:5,),2,1)) == (1,3)
-
-            @test minimum(ProductSplit((1:5,),2,2)) == 4
-            @test maximum(ProductSplit((1:5,),2,2)) == 5
-            @test extrema(ProductSplit((1:5,),2,2)) == (4,5)
-    	end
-
-    	@testset "extremadims" begin
-    		ps = ProductSplit((1:10,),2,1)
-    		@test ParallelUtilities._extremadims(ps,1,()) == ()
-    		for iters in various_iters
-
-    			dims = length(iters)
-	    		for np = 1:5ntasks(iters), proc_id = 1:np
-	    	    	ps = ProductSplit(iters,np,proc_id)
-	    	    	if isempty(ps)
-	    	    		@test extremadims(ps) == Tuple(nothing for i=1:dims)
-	    	    	else
-		    	    	ext = Tuple(map(extrema,zip(collect(ps)...)))
-		    	    	@test extremadims(ps) == ext
-		    	    end
-	    	    end
-	    	end
-    	end
-
-    	@testset "extrema_commonlastdim" begin
-    	    iters = (1:10,4:6,1:4)
-    	    ps = ProductSplit(iters,37,8)
-    	    @test extrema_commonlastdim(ps) == ([(9,1),(6,1)],[(2,2),(4,2)])
-    	    ps = ProductSplit(iters,ntasks(iters)+1,ntasks(iters)+1)
-    	    @test extrema_commonlastdim(ps) === nothing
-    	end
-    end
-
-    @testset "in" begin
-
-    	function checkifpresent(iters,npmax=10)
-    		for np = 1:npmax, p = 1:np
-		        ps = ProductSplit(iters,np,p)
-		        pcol = collect(ps)
-
-		        for el in pcol
-		        	# It should be contained in this iterator
-		        	@test el in ps
-		        	for p2 in 1:np
-		        		# It should not be contained anywhere else
-		        		p2 == p && continue
-		        		ps2 = ProductSplit(iters,np,p2)
-		        		@test !(el in ps2)
-		        	end
-		        end
-		    end
-    	end
-
-        for iters in various_iters
-	        checkifpresent(iters)
-	    end
-
-	    @test ParallelUtilities._infullrange((),())
-    end
-
-    @testset "whichproc + procrange_recast" begin
-        np,proc_id = 5,5
-        iters = (1:10,4:6,1:4)
-        ps = ProductSplit(iters,np,proc_id)
-        @test whichproc(iters,first(ps),1) == 1
-        @test whichproc(iters,(100,100,100),1) === nothing
-        @test procrange_recast(iters,ps,1) == 1:1
-        @test procrange_recast(ps,1) == 1:1
-
-        smalleriter = (1:1,1:1,1:1)
-        err = ParallelUtilities.TaskNotPresentError(smalleriter,first(ps))
-        @test_throws err procrange_recast(smalleriter,ps,1)
-        smalleriter = (7:9,4:6,1:4)
-        err = ParallelUtilities.TaskNotPresentError(smalleriter,last(ps))
-        @test_throws err procrange_recast(smalleriter,ps,1)
-
-        iters = (1:1,2:2)
-        ps = ProductSplit(iters,np,proc_id)
-        @test whichproc(iters,first(ps),np) === nothing
-        @test whichproc(iters,nothing,np) === nothing
-        @test procrange_recast(iters,ps,2) == (0:-1)
-        @test procrange_recast(ps,2) == (0:-1)
-
-        iters = (1:1,2:2)
-        ps = ProductSplit(iters,1,1)
-        @test procrange_recast(iters,ps,2) == 1:1
-        @test procrange_recast(ps,2) == 1:1
-
-        iters = (Base.OneTo(2),2:4)
-        ps = ProductSplit(iters,2,1)
-        @test procrange_recast(iters,ps,1) == 1:1
-        @test procrange_recast(iters,ps,2) == 1:1
-        @test procrange_recast(iters,ps,ntasks(iters)) == 1:length(ps)
-
-        for np_new in 1:5ntasks(iters)
-        	for proc_id_new=1:np_new
-	        	ps_new = ProductSplit(iters,np_new,proc_id_new)
-
-	        	for val in ps_new
-	        		# Should loop only if ps_new is non-empty
-	        		@test whichproc(iters,val,np_new) == proc_id_new
-	        	end
-	        end
-	        procid_new_first = whichproc(iters,first(ps),np_new)
-	        proc_new_last = whichproc(iters,last(ps),np_new)
-        	@test procrange_recast(iters,ps,np_new) == (isempty(ps) ? (0:-1) : (procid_new_first:proc_new_last))
-        	@test procrange_recast(ps,np_new) == (isempty(ps) ? (0:-1) : (procid_new_first:proc_new_last))
+                io = IOBuffer()
+                summary(io,ps)
+                @test String(take!(io)) == summarystr
+            end
         end
 
-        @testset "different set" begin
-	        iters = (1:100,1:4000)
-	        ps = ProductSplit((20:30,1:1),2,1)
-	        @test procrange_recast(iters,ps,700) == 1:1
-	        ps = ProductSplit((20:30,1:1),2,2)
-	        @test procrange_recast(iters,ps,700) == 1:1
+        @testset "firstlast" begin
+            @testset "first" begin
 
-	        iters = (1:1,2:2)
-	        ps = ProductSplit((20:30,2:2),2,1)
-	        @test_throws ParallelUtilities.TaskNotPresentError procrange_recast(iters,ps,3)
-	        ps = ProductSplit((1:30,2:2),2,1)
-	        @test_throws ParallelUtilities.TaskNotPresentError procrange_recast(iters,ps,3)
+            	@test ParallelUtilities._first(()) == ()
+
+                for iters in various_iters,np=1:5ntasks(iters)
+
+    	            ps = ProductSplit(iters,np,1)
+    	            @test first(ps) == ( isempty(ps) ? nothing : map(first,iters) )
+    	        end
+
+    	        iters = (1:1,)
+    	        ps = ProductSplit(iters,2ntasks(iters),ntasks(iters)+1) # must be empty
+    	        @test first(ps) === nothing
+            end
+            @testset "last" begin
+
+            	@test ParallelUtilities._last(()) == ()
+
+                for iters in various_iters,np=1:5ntasks(iters)
+
+    	            ps = ProductSplit(iters,np,np)
+    	            @test last(ps) == ( isempty(ps) ? nothing : map(last,iters) )
+    	        end
+
+    	        iters = (1:1,)
+    	        ps = ProductSplit(iters,2length(iters[1]),length(iters[1])+1) # must be empty
+    	        @test last(ps) === nothing
+            end
         end
-    end
 
-    @testset "localindex" begin
-        
-        for iters in various_iters
-	        for np=1:5ntasks(iters),proc_id=1:np
-	        	ps = ProductSplit(iters,np,proc_id)
-	        	for (ind,val) in enumerate(ps)
-	        		@test localindex(ps,val) == ind
-	        		@test localindex(iters,val,np,proc_id) == ind
-	        	end
-	        	if isempty(ps)
-	        		@test localindex(ps,first(ps)) === nothing
-	        	end
-	        end
-	    end
-    end
+        @testset "extrema" begin
 
-    @testset "whichproc_localindex" begin
-        for iters in various_iters
-	        for np=1:ntasks(iters),proc_id=1:np
-	        	ps_col = collect(ProductSplit(iters,np,proc_id))
-	        	ps_col_rev = [reverse(t) for t in ps_col] 
-	        	for val in ps_col
-	        		p,ind = whichproc_localindex(iters,val,np)
-	        		@test p == proc_id
-	        		ind_in_arr = searchsortedfirst(ps_col_rev,reverse(val))
-	        		@test ind == ind_in_arr
-	        	end
-	        end
-	    end
-    end
+        	@testset "min max extrema" begin
+    	    	function checkPSextrema(iters,fn::Function,npmax=10)
+    				for np = 1:npmax, p = 1:np
+    			        ps = ProductSplit(iters,np,p)
+    			        pcol = collect(ps)
+    			        for dim in 1:length(iters)
+    			        	@test begin
+    			        		res = fn(ps,dim=dim) == fn(x[dim] for x in pcol)
+    			        		if !res
+    			        			println(summary(ps))
+    			        		end
+    			        		res
+    			        	end
+    			        end
+    			    end
+    			end
 
-    @testset "getindex" begin
-    	
-    	@test ParallelUtilities._getindex((),1) == ()
-    	@test ParallelUtilities._getindex((),1,2) == ()
+    		    for iters in various_iters,	fn in [maximum,minimum,extrema]
+    		        checkPSextrema(iters,fn)
+    		    end
 
-    	@test ParallelUtilities.childindex((),1) == (1,)
+                @test minimum(ProductSplit((1:5,),2,1)) == 1
+                @test maximum(ProductSplit((1:5,),2,1)) == 3
+                @test extrema(ProductSplit((1:5,),2,1)) == (1,3)
 
-        for iters in various_iters
-            for np=1:ntasks(iters),p=1:np
-            	ps = ProductSplit(iters,np,p)
-            	ps_col = collect(ps)
-            	for i in 1:length(ps)
-            		@test ps[i] == ps_col[i]
-            	end
-            	@test ps[end] == ps[length(ps)]
-                for ind in [0,length(ps)+1]
-            	   @test_throws ParallelUtilities.BoundsError(ps,ind) ps[ind]
+                @test minimum(ProductSplit((1:5,),2,2)) == 4
+                @test maximum(ProductSplit((1:5,),2,2)) == 5
+                @test extrema(ProductSplit((1:5,),2,2)) == (4,5)
+        	end
+
+        	@testset "extremadims" begin
+        		ps = ProductSplit((1:10,),2,1)
+        		@test ParallelUtilities._extremadims(ps,1,()) == ()
+        		for iters in various_iters
+
+        			dims = length(iters)
+    	    		for np = 1:5ntasks(iters), proc_id = 1:np
+    	    	    	ps = ProductSplit(iters,np,proc_id)
+    	    	    	if isempty(ps)
+    	    	    		@test extremadims(ps) == Tuple(nothing for i=1:dims)
+    	    	    	else
+    		    	    	ext = Tuple(map(extrema,zip(collect(ps)...)))
+    		    	    	@test extremadims(ps) == ext
+    		    	    end
+    	    	    end
+    	    	end
+        	end
+
+        	@testset "extrema_commonlastdim" begin
+        	    iters = (1:10,4:6,1:4)
+        	    ps = ProductSplit(iters,37,8)
+        	    @test extrema_commonlastdim(ps) == ([(9,1),(6,1)],[(2,2),(4,2)])
+        	    ps = ProductSplit(iters,ntasks(iters)+1,ntasks(iters)+1)
+        	    @test extrema_commonlastdim(ps) === nothing
+        	end
+        end
+
+        @testset "in" begin
+
+        	function checkifpresent(iters,npmax=10)
+        		for np = 1:npmax, p = 1:np
+    		        ps = ProductSplit(iters,np,p)
+    		        pcol = collect(ps)
+
+    		        for el in pcol
+    		        	# It should be contained in this iterator
+    		        	@test el in ps
+    		        	for p2 in 1:np
+    		        		# It should not be contained anywhere else
+    		        		p2 == p && continue
+    		        		ps2 = ProductSplit(iters,np,p2)
+    		        		@test !(el in ps2)
+    		        	end
+    		        end
+    		    end
+        	end
+
+            for iters in various_iters
+    	        checkifpresent(iters)
+    	    end
+
+    	    @test ParallelUtilities._infullrange((),())
+        end
+
+        @testset "whichproc + procrange_recast" begin
+            np,proc_id = 5,5
+            iters = (1:10,4:6,1:4)
+            ps = ProductSplit(iters,np,proc_id)
+            @test whichproc(iters,first(ps),1) == 1
+            @test whichproc(iters,(100,100,100),1) === nothing
+            @test procrange_recast(iters,ps,1) == 1:1
+            @test procrange_recast(ps,1) == 1:1
+
+            smalleriter = (1:1,1:1,1:1)
+            err = ParallelUtilities.TaskNotPresentError(smalleriter,first(ps))
+            @test_throws err procrange_recast(smalleriter,ps,1)
+            smalleriter = (7:9,4:6,1:4)
+            err = ParallelUtilities.TaskNotPresentError(smalleriter,last(ps))
+            @test_throws err procrange_recast(smalleriter,ps,1)
+
+            iters = (1:1,2:2)
+            ps = ProductSplit(iters,np,proc_id)
+            @test whichproc(iters,first(ps),np) === nothing
+            @test whichproc(iters,nothing,np) === nothing
+            @test procrange_recast(iters,ps,2) == (0:-1)
+            @test procrange_recast(ps,2) == (0:-1)
+
+            iters = (1:1,2:2)
+            ps = ProductSplit(iters,1,1)
+            @test procrange_recast(iters,ps,2) == 1:1
+            @test procrange_recast(ps,2) == 1:1
+
+            iters = (Base.OneTo(2),2:4)
+            ps = ProductSplit(iters,2,1)
+            @test procrange_recast(iters,ps,1) == 1:1
+            @test procrange_recast(iters,ps,2) == 1:1
+            @test procrange_recast(iters,ps,ntasks(iters)) == 1:length(ps)
+
+            for np_new in 1:5ntasks(iters)
+            	for proc_id_new=1:np_new
+    	        	ps_new = ProductSplit(iters,np_new,proc_id_new)
+
+    	        	for val in ps_new
+    	        		# Should loop only if ps_new is non-empty
+    	        		@test whichproc(iters,val,np_new) == proc_id_new
+    	        	end
+    	        end
+    	        procid_new_first = whichproc(iters,first(ps),np_new)
+    	        proc_new_last = whichproc(iters,last(ps),np_new)
+            	@test procrange_recast(iters,ps,np_new) == (isempty(ps) ? (0:-1) : (procid_new_first:proc_new_last))
+            	@test procrange_recast(ps,np_new) == (isempty(ps) ? (0:-1) : (procid_new_first:proc_new_last))
+            end
+
+            @testset "different set" begin
+    	        iters = (1:100,1:4000)
+    	        ps = ProductSplit((20:30,1:1),2,1)
+    	        @test procrange_recast(iters,ps,700) == 1:1
+    	        ps = ProductSplit((20:30,1:1),2,2)
+    	        @test procrange_recast(iters,ps,700) == 1:1
+
+    	        iters = (1:1,2:2)
+    	        ps = ProductSplit((20:30,2:2),2,1)
+    	        @test_throws ParallelUtilities.TaskNotPresentError procrange_recast(iters,ps,3)
+    	        ps = ProductSplit((1:30,2:2),2,1)
+    	        @test_throws ParallelUtilities.TaskNotPresentError procrange_recast(iters,ps,3)
+            end
+        end
+
+        @testset "indexinproduct" begin
+            @test indexinproduct((1:4,2:3:8),(3,5)) == 7
+            @test indexinproduct((1:4,2:3:8),(3,6)) === nothing
+            @test_throws ArgumentError indexinproduct((),())
+        end
+
+        @testset "localindex" begin
+            
+            for iters in various_iters
+    	        for np=1:5ntasks(iters),proc_id=1:np
+    	        	ps = ProductSplit(iters,np,proc_id)
+    	        	for (ind,val) in enumerate(ps)
+    	        		@test localindex(ps,val) == ind
+    	        		@test localindex(iters,val,np,proc_id) == ind
+    	        	end
+    	        	if isempty(ps)
+    	        		@test localindex(ps,first(ps)) === nothing
+    	        	end
+    	        end
+    	    end
+        end
+
+        @testset "whichproc_localindex" begin
+            for iters in various_iters
+    	        for np=1:ntasks(iters),proc_id=1:np
+    	        	ps_col = collect(ProductSplit(iters,np,proc_id))
+    	        	ps_col_rev = [reverse(t) for t in ps_col] 
+    	        	for val in ps_col
+    	        		p,ind = whichproc_localindex(iters,val,np)
+    	        		@test p == proc_id
+    	        		ind_in_arr = searchsortedfirst(ps_col_rev,reverse(val))
+    	        		@test ind == ind_in_arr
+    	        	end
+    	        end
+    	    end
+        end
+
+        @testset "getindex" begin
+        	
+        	@test ParallelUtilities._getindex((),1) == ()
+        	@test ParallelUtilities._getindex((),1,2) == ()
+
+        	@test ParallelUtilities.childindex((),1) == (1,)
+
+            for iters in various_iters
+                for np=1:ntasks(iters),p=1:np
+                	ps = ProductSplit(iters,np,p)
+                	ps_col = collect(ps)
+                	for i in 1:length(ps)
+                		@test ps[i] == ps_col[i]
+                	end
+                	@test ps[end] == ps[length(ps)]
+                    for ind in [0,length(ps)+1]
+                	   @test_throws ParallelUtilities.BoundsError(ps,ind) ps[ind]
+                    end
                 end
             end
         end
+    end
+    @testsetwithinfo "ProductSection" begin
+        @testset "Constructor" begin
+            function testPS(iterators)
+                itp = collect(Iterators.product(iterators...))
+                l = length(itp)
+                for startind in 1:l, endind in startind:l
+                    ps = ProductSection(iterators, startind:endind)
+                    @test eltype(ps) == Tuple{eltype.(iterators)...}
+                    for (psind,ind) in enumerate(startind:endind)
+                        @test ps[psind] == itp[ind]
+                    end
+                end
+            end
+
+            for iter in various_iters
+                testPS(iter)
+            end
+
+            @test_throws ArgumentError ProductSection((),2:3)
+            @test_throws ArgumentError ProductSection((1:3,),1:0)
+        end
+    end
+    @testset "dropleading" begin
+        ps = ProductSplit((1:5,2:4,1:3),7,3);
+        @test dropleading(ps) isa ProductSection
+        @test collect(dropleading(ps)) == [(4,1),(2,2),(3,2)]
+        @test collect(dropleading(dropleading(ps))) == [(1,),(2,)]
     end
 end;
 
@@ -1385,41 +1422,35 @@ end;
 	end
 end;
 
-@testset "pmap and reduce" begin
+@testset "map reduce" begin
+    @testset "Sorted and Unsorted" begin
+        @test Sorted() isa Ordering
+        @test Unsorted() isa Ordering
+    end;
 
-	exceptiontype = RemoteException
-	if VERSION >= v"1.3"
-		exceptiontype = CompositeException
-	end
-
-	@testset "Sorted and Unsorted" begin
-	    @test Sorted() isa Ordering
-	    @test Unsorted() isa Ordering
-	end;
-
-	@testset "pval" begin
-		p = pval(2,3)
-	    @test value(p) == 3
-	    @test value(3) == 3
-	    @test value(p) == value(value(p))
+    @testset "pval" begin
+        p = pval(2,3)
+        @test value(p) == 3
+        @test value(3) == 3
+        @test value(p) == value(value(p))
 
         @test convert(pval{Any},p) == pval{Any}(2,3)
         @test convert(pval{Float64},p) == pval{Any}(2,3.0)
-	end;
+    end;
 
-	@testset "mapTreeNode" begin
+    @testset "mapTreeNode" begin
 
-		@testset "maybepvalput!" begin
-		    pipe = BranchChannel{Int,Int}(myid(),0)
+        @testset "maybepvalput!" begin
+            pipe = BranchChannel{Int,Int}(myid(),0)
             rank = 1
-		    maybepvalput!(pipe,rank,0)
-		    @test isready(pipe.selfchannels.out)
-		    @test take!(pipe.selfchannels.out) == 0
+            maybepvalput!(pipe,rank,0)
+            @test isready(pipe.selfchannels.out)
+            @test take!(pipe.selfchannels.out) == 0
 
-		    pipe = BranchChannel{pval,pval}(myid(),0)
-		    maybepvalput!(pipe,rank,0)
-		    @test isready(pipe.selfchannels.out)
-		    @test take!(pipe.selfchannels.out) == pval(rank,0)
+            pipe = BranchChannel{pval,pval}(myid(),0)
+            maybepvalput!(pipe,rank,0)
+            @test isready(pipe.selfchannels.out)
+            @test take!(pipe.selfchannels.out) == pval(rank,0)
 
             pipe = BranchChannel{pval{Int},pval{Int}}(myid(),0)
             maybepvalput!(pipe,rank,0)
@@ -1463,54 +1494,54 @@ end;
             maybepvalput!(pipe,rank,val)
             @test isready(pipe.selfchannels.out)
             @test take!(pipe.selfchannels.out) == pval(rank,Int[1])
-		end
+        end
 
-		function test_on_pipe(fn,iterator,pipe,result_expected)
+        function test_on_pipe(fn,iterator,pipe,result_expected)
             progressrc = nothing
             rank = 1
-			@test_throws ErrorException mapTreeNode(x->error(""),iterator,rank,pipe,progressrc)
-			@test !isready(pipe.selfchannels.out) # should not have any result as there was an error
-			@test isready(pipe.selfchannels.err)
-			@test take!(pipe.selfchannels.err) # error flag should be true
-			@test !isready(pipe.selfchannels.err) # should not hold anything now
-			@test !isready(pipe.parentchannels.out)
-			@test !isready(pipe.parentchannels.err)
-			@test !isready(pipe.childrenchannels.out)
-			@test !isready(pipe.childrenchannels.err)
+            @test_throws ErrorException mapTreeNode(x->error(""),iterator,rank,pipe,progressrc)
+            @test !isready(pipe.selfchannels.out) # should not have any result as there was an error
+            @test isready(pipe.selfchannels.err)
+            @test take!(pipe.selfchannels.err) # error flag should be true
+            @test !isready(pipe.selfchannels.err) # should not hold anything now
+            @test !isready(pipe.parentchannels.out)
+            @test !isready(pipe.parentchannels.err)
+            @test !isready(pipe.childrenchannels.out)
+            @test !isready(pipe.childrenchannels.err)
 
-			mapTreeNode(fn,iterator,rank,pipe,progressrc)
-			@test isready(pipe.selfchannels.err)
-			@test !take!(pipe.selfchannels.err) # error flag should be false
-			@test !isready(pipe.selfchannels.err)
-			@test isready(pipe.selfchannels.out)
-			@test take!(pipe.selfchannels.out) == result_expected
-			@test !isready(pipe.selfchannels.out)
-			@test !isready(pipe.parentchannels.out)
-			@test !isready(pipe.parentchannels.err)
-			@test !isready(pipe.childrenchannels.out)
-			@test !isready(pipe.childrenchannels.err)
-		end
+            mapTreeNode(fn,iterator,rank,pipe,progressrc)
+            @test isready(pipe.selfchannels.err)
+            @test !take!(pipe.selfchannels.err) # error flag should be false
+            @test !isready(pipe.selfchannels.err)
+            @test isready(pipe.selfchannels.out)
+            @test take!(pipe.selfchannels.out) == result_expected
+            @test !isready(pipe.selfchannels.out)
+            @test !isready(pipe.parentchannels.out)
+            @test !isready(pipe.parentchannels.err)
+            @test !isready(pipe.childrenchannels.out)
+            @test !isready(pipe.childrenchannels.err)
+        end
 
-		@testset "range" begin
-	 		iterator = 1:10
-			
-			pipe = BranchChannel{Int,Int}(myid(),0)
-			test_on_pipe(sum,iterator,pipe,sum(iterator))
-		end
-		
-		@testset "ProductSplit" begin
-			iterators = (1:10,)
-			ps = ProductSplit(iterators,1,1)
+        @testset "range" begin
+            iterator = 1:10
+            
+            pipe = BranchChannel{Int,Int}(myid(),0)
+            test_on_pipe(sum,iterator,pipe,sum(iterator))
+        end
+        
+        @testset "ProductSplit" begin
+            iterators = (1:10,)
+            ps = ProductSplit(iterators,1,1)
 
-			pipe = BranchChannel{Int,Int}(myid(),0)
-			test_on_pipe(x->sum(y[1] for y in x),ps,pipe,sum(iterators[1]))
+            pipe = BranchChannel{Int,Int}(myid(),0)
+            test_on_pipe(x->sum(y[1] for y in x),ps,pipe,sum(iterators[1]))
 
-			pipe = BranchChannel{Int,Int}(myid(),1)
-			test_on_pipe(x->sum(y[1] for y in x),ps,pipe,sum(iterators[1]))
+            pipe = BranchChannel{Int,Int}(myid(),1)
+            test_on_pipe(x->sum(y[1] for y in x),ps,pipe,sum(iterators[1]))
 
-			pipe = BranchChannel{Int,Int}(myid(),2)
-			test_on_pipe(x->sum(y[1] for y in x),ps,pipe,sum(iterators[1]))
-		end
+            pipe = BranchChannel{Int,Int}(myid(),2)
+            test_on_pipe(x->sum(y[1] for y in x),ps,pipe,sum(iterators[1]))
+        end
 
         @testset "progress" begin
             @test isnothing(ParallelUtilities.indicatemapprogress!(nothing,1))
@@ -1519,14 +1550,14 @@ end;
             ParallelUtilities.indicatemapprogress!(progress,10)
             @test take!(progress) == (true,false,10)
         end
-	end;
+    end;
 
-	@testset "reduce" begin
+    @testset "reduce" begin
 
-		# Leaves just push results to the parent
-		# reduced value at a leaf is simply whatever is stored in the local output channel
-		@testset "at a leaf" begin
-			# These do not check for errors
+        # Leaves just push results to the parent
+        # reduced value at a leaf is simply whatever is stored in the local output channel
+        @testset "at a leaf" begin
+            # These do not check for errors
             result = 1
             rank = 1
             val = pval(rank,result)
@@ -1538,34 +1569,46 @@ end;
             pipe = BranchChannel{typeof(result),typeof(result)}(myid(),0)
             put!(pipe.selfchannels.out,result)
             @test ParallelUtilities.reducedvalue(sum,rank,pipe,Unsorted()) == result
-		end;
+        end;
 
-		# # Values are collected at the intermediate nodes
-		@testset "at parent nodes" begin
+        # # Values are collected at the intermediate nodes
+        @testset "at parent nodes" begin
 
-			# Put some known values on the self and children channels
-			function putselfchildren!(pipe::BranchChannel,::Unsorted,rank=1)
-                if rank >= 1
-    		    	put!(pipe.selfchannels.out,0)
-    		    	put!(pipe.selfchannels.err,false)
+            # Put some known values on the self and children channels
+            @everywhere begin
+
+            function putselfchildren!(pipe::BranchChannel,ord::Ordering,rank=1,
+                args...)
+                putselfchildren!(pipe,ord,
+                    rank > 0 ? SubTreeNode(rank) : TopTreeNode(rank),
+                    args...)
+            end
+            function putselfchildren!(pipe::BranchChannel,::Unsorted,::TopTreeNode)
+                for i=1:nchildren(pipe)
+                    put!(pipe.childrenchannels.out,i)
+                    put!(pipe.childrenchannels.err,false)
                 end
-		    	for i=1:nchildren(pipe)
-		    		put!(pipe.childrenchannels.out,i)
-		    		put!(pipe.childrenchannels.err,false)
-		    	end
-		    end
-		    function putselfchildren!(pipe::BranchChannel{<:pval},::Sorted,
-                selfrank=2,leftchildrank=1,rightchildrank=3)
-		    	if selfrank >= 1
-                    put!(pipe.selfchannels.out,pval(selfrank,2))
-    		    	put!(pipe.selfchannels.err,false)
+            end
+            function putselfchildren!(pipe::BranchChannel,::Unsorted,::SubTreeNode)
+                put!(pipe.selfchannels.out,0)
+                put!(pipe.selfchannels.err,false)
+                for i=1:nchildren(pipe)
+                    put!(pipe.childrenchannels.out,i)
+                    put!(pipe.childrenchannels.err,false)
                 end
+            end
+            function putselfchildren!(pipe::BranchChannel{<:pval},::Sorted,
+                node::SubTreeNode,leftchildrank=1,rightchildrank=3)
+
+                selfrank = node.rank
+                put!(pipe.selfchannels.out,pval(selfrank,2))
+                put!(pipe.selfchannels.err,false)
                 N = nchildren(pipe)
-		    	
+                
                 if N > 0
                     # left child
-    		    	put!(pipe.childrenchannels.out,pval(leftchildrank,1))
-    		    	put!(pipe.childrenchannels.err,false)
+                    put!(pipe.childrenchannels.out,pval(leftchildrank,1))
+                    put!(pipe.childrenchannels.err,false)
                 end
 
                 if N > 1
@@ -1573,44 +1616,71 @@ end;
                     put!(pipe.childrenchannels.out,pval(rightchildrank,3))
                     put!(pipe.childrenchannels.err,false)
                 end
-		    end
+            end
+            function putselfchildren!(pipe::BranchChannel{<:pval},::Sorted,
+                node::TopTreeNode,leftchildrank=1,rightchildrank=3)
 
-		    function clearerrors!(pipe::BranchChannel,rank=1)
-                if rank >= 1
-                    take!(pipe.selfchannels.err)
+                selfrank = node.rank
+                N = nchildren(pipe)
+                
+                if N > 0
+                    # left child
+                    put!(pipe.childrenchannels.out,pval(leftchildrank,1))
+                    put!(pipe.childrenchannels.err,false)
                 end
-		    	for i=1:nchildren(pipe)
-		    		take!(pipe.childrenchannels.err)
-		    	end
-		    end
 
-			@testset "reducedvalue" begin
+                if N > 1
+                    # right child
+                    put!(pipe.childrenchannels.out,pval(rightchildrank,3))
+                    put!(pipe.childrenchannels.err,false)
+                end
+            end
 
-				function testreduction(freduce::Function,pipe::BranchChannel,
-		    		ifsorted::Unsorted,res_exp,rank=2)
+            function clearerrors!(pipe::BranchChannel,rank=1)
+                clearerrors!(pipe,
+                    rank > 0 ? SubTreeNode(rank) : TopTreeNode(rank))
+            end
+            function clearerrors!(pipe::BranchChannel,node::SubTreeNode)
+                take!(pipe.selfchannels.err)
+                for i=1:nchildren(pipe)
+                    take!(pipe.childrenchannels.err)
+                end
+            end
+            function clearerrors!(pipe::BranchChannel,node::TopTreeNode)
+                for i=1:nchildren(pipe)
+                    take!(pipe.childrenchannels.err)
+                end
+            end
 
-			    	p = pipe.p
+            end
 
-			    	try
-				    	putselfchildren!(pipe,ifsorted,rank)
-						@test value(reducedvalue(freduce,rank,pipe,ifsorted)) == res_exp
-						clearerrors!(pipe,rank)
-				    	
-				  		@fetchfrom p putselfchildren!(pipe,ifsorted,rank)
-						@test value(@fetchfrom p reducedvalue(freduce,rank,pipe,ifsorted)) == res_exp
-						clearerrors!(pipe,rank)
-						
-						@fetchfrom p putselfchildren!(pipe,ifsorted,rank)
-						@test value(reducedvalue(freduce,rank,pipe,ifsorted)) == res_exp
-						clearerrors!(pipe,rank)
-						
-						putselfchildren!(pipe,ifsorted,rank)
-						@test value(@fetchfrom p reducedvalue(freduce,rank,pipe,ifsorted)) == res_exp
-						clearerrors!(pipe,rank)
-					catch
-						rethrow()
-					end
-				end
+            @testset "reducedvalue" begin
+
+                function testreduction(freduce::Function,pipe::BranchChannel,
+                    ifsorted::Unsorted,res_exp,rank=2)
+
+                    p = pipe.p
+
+                    try
+                        putselfchildren!(pipe,ifsorted,rank)
+                        @test value(reducedvalue(freduce,rank,pipe,ifsorted)) == res_exp
+                        clearerrors!(pipe,rank)
+                        
+                        @fetchfrom p putselfchildren!(pipe,ifsorted,rank)
+                        @test value(@fetchfrom p reducedvalue(freduce,rank,pipe,ifsorted)) == res_exp
+                        clearerrors!(pipe,rank)
+                        
+                        @fetchfrom p putselfchildren!(pipe,ifsorted,rank)
+                        @test value(reducedvalue(freduce,rank,pipe,ifsorted)) == res_exp
+                        clearerrors!(pipe,rank)
+                        
+                        putselfchildren!(pipe,ifsorted,rank)
+                        @test value(@fetchfrom p reducedvalue(freduce,rank,pipe,ifsorted)) == res_exp
+                        clearerrors!(pipe,rank)
+                    catch
+                        rethrow()
+                    end
+                end
 
                 function testreduction(freduce::Function,pipe::BranchChannel,
                     ifsorted::Sorted,res_exp,
@@ -1640,107 +1710,166 @@ end;
                     end
                 end
 
-			    for n = 1:2
-			    	@testset "Unsorted" begin
-			            pipe = BranchChannel{Int,Int}(myid(),n)
-			            res_exp = sum(0:n)
-			            testreduction(sum,pipe,Unsorted(),res_exp,2)
+                for n = 1:2
+                    @testset "Unsorted" begin
+                        pipe = BranchChannel{Int,Int}(myid(),n)
+                        res_exp = sum(0:n)
+                        testreduction(sum,pipe,Unsorted(),res_exp,2)
+                        testreduction(sum,pipe,Unsorted(),res_exp,SubTreeNode(2))
 
                         @testset "toptree" begin
                             testreduction(sum,pipe,Unsorted(),res_exp,0)
+                            testreduction(sum,pipe,Unsorted(),res_exp,TopTreeNode(0))
                         end
-			        end
-			    	@testset "Sorted" begin
-			            pipe = BranchChannel{pval,pval}(myid(),n)
-			            res_exp = collect(1:n+1)
-			            testreduction(x->vcat(x...),pipe,Sorted(),res_exp)
-			    
-			            pipe = BranchChannel{pval,pval}(myid(),n)
-			            res_exp = sum(1:n+1)
-			            testreduction(sum,pipe,Sorted(),res_exp)
+                    end
+                    @testset "Sorted" begin
+                        pipe = BranchChannel{pval,pval}(myid(),n)
+                        res_exp = collect(1:n+1)
+                        testreduction(x->vcat(x...),pipe,Sorted(),res_exp)
+                        testreduction(x->vcat(x...),pipe,Sorted(),res_exp,SubTreeNode(2))
+                
+                        pipe = BranchChannel{pval,pval}(myid(),n)
+                        res_exp = sum(1:n+1)
+                        testreduction(sum,pipe,Sorted(),res_exp)
+                        testreduction(sum,pipe,Sorted(),res_exp,SubTreeNode(2))
 
                         @testset "toptree" begin
                             pipe = BranchChannel{pval,pval}(myid(),n)
                             res_exp = n == 1 ? [1] : [1,3]
                             testreduction(x->vcat(x...),pipe,Sorted(),res_exp,0,1,2)
+                            testreduction(x->vcat(x...),pipe,Sorted(),res_exp,TopTreeNode(0),1,2)
                     
                             pipe = BranchChannel{pval,pval}(myid(),n)
                             res_exp = n == 1 ? 1 : 1+3
                             testreduction(sum,pipe,Sorted(),res_exp,0,1,2)
+                            testreduction(sum,pipe,Sorted(),res_exp,TopTreeNode(0),1,2)
                         end
-			    	end
-			    end
-			end
+                    end
+                end
+            end
 
-			@testset "reduceTreeNode" begin
+            @testset "reduceTreeNode" begin
 
-		    	function testreduction(freduce::Function,pipe::BranchChannel,
-		    		ifsorted::Ordering,res_exp)
+                @everywhere begin
+                
+                function testfinalized(rank,pipe)
+                    rank > 0 ? 
+                        testfinalized(SubTreeNode(rank),pipe) : 
+                        testfinalized(TopTreeNode(rank),pipe)
+                end
 
-		    		@test !isready(pipe.parentchannels.out)
-		    		@test !isready(pipe.parentchannels.err)
+                function testfinalized(::SubTreeNode,pipe)
+                    @test pipe.selfchannels.out.where == 0
+                    @test pipe.selfchannels.err.where == 0
+                    @test pipe.childrenchannels.out.where == 0
+                    @test pipe.childrenchannels.err.where == 0
+                end
+                function testfinalized(::TopTreeNode,pipe)
+                    @test pipe.childrenchannels.out.where == 0
+                    @test pipe.childrenchannels.err.where == 0
+                end
+
+                function testreduction(freduce::Function,pipe::BranchChannel,
+                    ifsorted::Ordering,res_exp,rank,args...)
+
+                    @test !isready(pipe.parentchannels.out)
+                    @test !isready(pipe.parentchannels.err)
 
                     progressrc = nothing
-                    rank = 2
 
-		    		try
-			    		wait(@spawnat pipe.p putselfchildren!(pipe,ifsorted))
-			    		reduceTreeNode(freduce,rank,pipe,ifsorted,progressrc)
-			    	catch
-			    		rethrow()
-			    	end
-					@test isready(pipe.parentchannels.out)
-					@test isready(pipe.parentchannels.err)
-					@test !take!(pipe.parentchannels.err) # there should be no error
-					@test value(take!(pipe.parentchannels.out)) == res_exp
+                    try
+                        wait(@spawnat(pipe.p,
+                            putselfchildren!(pipe,ifsorted,rank,args...) ) )
+                        reduceTreeNode(freduce,rank,pipe,ifsorted,progressrc)
+                    catch
+                        rethrow()
+                    end
+                    @test isready(pipe.parentchannels.out)
+                    @test isready(pipe.parentchannels.err)
+                    @test !take!(pipe.parentchannels.err) # there should be no error
+                    @test value(take!(pipe.parentchannels.out)) == res_exp
 
-					# The pipe should be finalized at this point
-					@test pipe.selfchannels.out.where == 0
-					@test pipe.selfchannels.err.where == 0
-					@test pipe.childrenchannels.out.where == 0
-					@test pipe.childrenchannels.err.where == 0
-		    	end
+                    # The pipe should be finalized at this point
+                    testfinalized(rank,pipe)
+                end
 
-		    	for nchildren = 1:2
-			    	@testset "Unsorted" begin
-			            pipe = BranchChannel{Int,Int}(myid(),nchildren)
-			            res_exp = sum(0:nchildren)
-			            testreduction(sum,pipe,Unsorted(),res_exp)
+                end
 
-			            rc_parent = RemoteChannelContainer{Int}(1)
-			            p = workers()[1]
-			            pipe = BranchChannel(p,Int,rc_parent,nchildren)
-			            testreduction(sum,pipe,Unsorted(),res_exp)
-			        end
-			    	@testset "Sorted" begin
-			            pipe = BranchChannel{pval,pval}(myid(),nchildren)
-			            res_exp = collect(1:nchildren+1)
-			            testreduction(x->vcat(x...),pipe,Sorted(),res_exp)
+                for n = 1:2
+                    @testset "Unsorted" begin
+                        pipe = BranchChannel{Int,Int}(myid(),n)
+                        res_exp = sum(0:n)
+                        testreduction(sum,pipe,Unsorted(),res_exp,2)
+                        
+                        pipe = BranchChannel{Int,Int}(myid(),n)
+                        testreduction(sum,pipe,Unsorted(),res_exp,SubTreeNode(2))
 
-			            rc_parent = RemoteChannelContainer{pval}(myid(),1)
-			            p = workers()[1]
-			            pipe = BranchChannel(p,pval,rc_parent,nchildren)
-			            testreduction(x->vcat(x...),pipe,Sorted(),res_exp)
-			    
-			            pipe = BranchChannel{pval,pval}(myid(),nchildren)
-			            res_exp = sum(1:nchildren+1)
-			            testreduction(sum,pipe,Sorted(),res_exp)
+                        pipe = BranchChannel{Int,Int}(myid(),n)
+                        testreduction(sum,pipe,Unsorted(),res_exp,TopTreeNode(0))
 
-			            rc_parent = RemoteChannelContainer{pval}(1)
-			            p = workers()[1]
-			            pipe = BranchChannel(p,pval,rc_parent,nchildren)
-			            testreduction(sum,pipe,Sorted(),res_exp)
-			    	end
-			    end
+                        rc_parent = RemoteChannelContainer{Int}(1)
+                        p = workers()[1]
+                        
+                        pipe = BranchChannel(p,Int,rc_parent,n)
+                        testreduction(sum,pipe,Unsorted(),res_exp,2)
+                        
+                        pipe = BranchChannel(p,Int,rc_parent,n)
+                        testreduction(sum,pipe,Unsorted(),res_exp,SubTreeNode(2))
+                    end
+                    @testset "Sorted" begin
+                        @testset "SubTreeNode" begin
+                            res_exp = collect(1:n+1)
+                            pipe = BranchChannel{pval,pval}(myid(),n)
+                            testreduction(x->vcat(x...),pipe,Sorted(),res_exp,2)
+                            
+                            pipe = BranchChannel{pval,pval}(myid(),n)
+                            testreduction(x->vcat(x...),pipe,Sorted(),res_exp,SubTreeNode(2))
+                            
+                            rc_parent = RemoteChannelContainer{pval}(myid(),1)
+                            p = workers()[1]
+                            
+                            pipe = BranchChannel(p,pval,rc_parent,n)
+                            testreduction(x->vcat(x...),pipe,Sorted(),res_exp,2)
+
+                            pipe = BranchChannel(p,pval,rc_parent,n)
+                            testreduction(x->vcat(x...),pipe,Sorted(),res_exp,SubTreeNode(2))
+                    
+                            res_exp = sum(1:n+1)
+                            pipe = BranchChannel{pval,pval}(myid(),n)
+                            testreduction(sum,pipe,Sorted(),res_exp,2)
+                            
+                            pipe = BranchChannel{pval,pval}(myid(),n)
+                            testreduction(sum,pipe,Sorted(),res_exp,SubTreeNode(2))
+
+                            rc_parent = RemoteChannelContainer{pval}(1)
+                            p = workers()[1]
+                            
+                            pipe = BranchChannel(p,pval,rc_parent,n)
+                            testreduction(sum,pipe,Sorted(),res_exp,2)
+                            
+                            pipe = BranchChannel(p,pval,rc_parent,n)
+                            testreduction(sum,pipe,Sorted(),res_exp,SubTreeNode(2))
+                        end
+                        
+                        @testset "TopTreeNode" begin
+                            res_exp = n == 1 ? [1] : [1,3]
+                            
+                            pipe = BranchChannel{pval,pval}(myid(),n)
+                            testreduction(x->vcat(x...),pipe,Sorted(),res_exp,0)
+
+                            pipe = BranchChannel{pval,pval}(myid(),n)
+                            testreduction(x->vcat(x...),pipe,Sorted(),res_exp,TopTreeNode(0))
+                        end
+                    end
+                end
 
                 # The top tree must have children by definition
                 pipe = BranchChannel{Int,Int}(myid(),0)
                 putselfchildren!(pipe,Unsorted(),0)
-                err = ErrorException("nodes with rank <=0 must have children")
-                @test_throws err reducedvalue(sum,0,pipe,Unsorted())
+                @test_throws ErrorException reducedvalue(sum,0,pipe,Unsorted())
                 clearerrors!(pipe,0)
-		    end
-		end;
+            end
+        end;
 
         @testset "progress" begin
             @test isnothing(ParallelUtilities.indicatereduceprogress!(nothing,1))
@@ -1753,7 +1882,15 @@ end;
             ParallelUtilities.indicatefailure!(progress,10)
             @test take!(progress) == (false,false,10)
         end
-	end;
+    end;
+end
+
+@testset "pmapbatch and pmapreduce" begin
+
+	exceptiontype = RemoteException
+	if VERSION >= v"1.3"
+		exceptiontype = CompositeException
+	end
 
 	@testsetwithinfo "pmapbatch" begin
 		@testsetwithinfo "batch" begin

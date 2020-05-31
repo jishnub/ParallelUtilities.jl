@@ -61,64 +61,91 @@ abstract type Ordering end
 struct Sorted <: Ordering end
 struct Unsorted <: Ordering end
 
-function reducedvalue(freduce::Function,rank,
-	pipe::BranchChannel{Tmap,Tred},::Unsorted) where {Tmap,Tred}
-
-	N = nchildren(pipe)
-	if rank > 0
-		self = take!(pipe.selfchannels.out) :: Tmap
-		if N > 0
-			reducechildren = freduce(take!(pipe.childrenchannels.out)::Tred for i=1:N)::Tred
-			res = freduce((reducechildren, self)) :: Tred
-		elseif N == 0
-			res = freduce((self,)) :: Tred
-		end
-	else
-		if N > 0
-			res = freduce(take!(pipe.childrenchannels.out)::Tred for i=1:N)::Tred
-		elseif N == 0
-			# N == 0 && rank <= 0
-			# shouldn't reach this
-			error("nodes with rank <=0 must have children")
-		end
-	end
-	return res
+abstract type ReductionNode end
+struct TopTreeNode <: ReductionNode
+	rank :: Int
+end
+struct SubTreeNode <: ReductionNode
+	rank :: Int
 end
 
 function reducedvalue(freduce::Function,rank,
-	pipe::BranchChannel{Tmap,Tred},::Sorted) where {Tmap,Tred}
+	pipe::BranchChannel,ifsorted::Ordering)
 
+	reducedvalue(freduce,
+		rank > 0 ? SubTreeNode(rank) : TopTreeNode(rank),
+		pipe,ifsorted)
+end
+
+function reducedvalue(freduce::Function,node::SubTreeNode,
+	pipe::BranchChannel{Tmap,Tred},::Unsorted) where {Tmap,Tred}
+
+	self = take!(pipe.selfchannels.out) :: Tmap
 	N = nchildren(pipe)
-	leftchild = N > 0
-	selfvalpresent = rank > 0
-	vals = Vector{Tred}(undef,N + selfvalpresent)
+	vals = Vector{Tred}(undef,N+1)
 	@sync begin
-		@async begin
-			if selfvalpresent
-				selfval = take!(pipe.selfchannels.out)::Tmap
-				selfvalred = freduce((value(selfval),))
-				pv = pval(rank,selfvalred)
-				ind = selfvalpresent + leftchild
-				vals[ind] = pv
-			end
-		end
-		@async begin 
-			if selfvalpresent
-				for i=1:N
-					pv = take!(pipe.childrenchannels.out) :: Tred
-					shift = pv.rank > rank ? 1 : -1
-					ind = shift + leftchild + 1
-					vals[ind] = pv
-				end
-			else
-				for i=1:N
-					pv = take!(pipe.childrenchannels.out) :: Tred
-					vals[i] = pv
-				end
-				sort!(vals,by=pv->pv.rank)
-			end
+		@async vals[1] = freduce([self]) :: Tred
+		@async for i=1:N
+			vals[i+1] = take!(pipe.childrenchannels.out)::Tred
 		end
 	end
+	
+	freduce(vals)
+end
+function reducedvalue(freduce::Function,node::TopTreeNode,
+	pipe::BranchChannel{<:Any,Tred},::Unsorted) where {Tred}
+
+	N = nchildren(pipe)
+	if N == 0
+		# shouldn't reach this
+		error("Nodes on the top tree must have children")
+	end
+	vals = Vector{Tred}(undef,N)
+	for i=1:N
+		vals[i] = take!(pipe.childrenchannels.out)::Tred
+	end
+
+	freduce(vals)
+end
+
+function reducedvalue(freduce::Function,node::SubTreeNode,
+	pipe::BranchChannel{Tmap,Tred},::Sorted) where {Tmap,Tred}
+
+	rank = node.rank
+	N = nchildren(pipe)
+	leftchild = N > 0
+	vals = Vector{Tred}(undef,N + 1)
+	@sync begin
+		@async begin
+			selfval = take!(pipe.selfchannels.out)::Tmap
+			selfvalred = freduce((value(selfval),))
+			pv = pval(rank,selfvalred)
+			ind = leftchild + 1
+			vals[ind] = pv
+		end
+		@async for i=1:N 
+			pv = take!(pipe.childrenchannels.out) :: Tred
+			shift = pv.rank > rank ? 1 : -1
+			ind = shift + leftchild + 1
+			vals[ind] = pv
+		end
+	end
+
+	Tred(rank,freduce(value(v) for v in vals))
+end
+function reducedvalue(freduce::Function,node::TopTreeNode,
+	pipe::BranchChannel{<:Any,Tred},::Sorted) where {Tred}
+
+	rank = node.rank
+	N = nchildren(pipe)
+	leftchild = N > 0
+	@assert leftchild "Nodes on the top tree must have children"
+	vals = Vector{Tred}(undef,N)
+	for i=1:N
+		pv = take!(pipe.childrenchannels.out) :: Tred
+		vals[i] = pv
+	end
+	sort!(vals,by=pv->pv.rank)
 
 	Tred(rank,freduce(value(v) for v in vals))
 end
@@ -128,25 +155,37 @@ function indicatereduceprogress!(progress::RemoteChannel,rank)
 	put!(progress,(false,true,rank))
 end
 
-function reduceTreeNode(freduce::Function,rank,pipe::BranchChannel{Tmap,Tred},
-	ifsort::Ordering,progress::Union{Nothing,RemoteChannel}) where {Tmap,Tred}
+function reduceTreeNode(freduce::Function,rank,pipe::BranchChannel,
+	ifsort::Ordering,progress)
+	
+	reduceTreeNode(freduce,
+		rank > 0 ? SubTreeNode(rank) : TopTreeNode(rank),
+		pipe,ifsort,progress)
+end
+
+function checkerror(::SubTreeNode,pipe::BranchChannel)
+	selferr = take!(pipe.selfchannels.err)
+	childrenerr = any(take!(pipe.childrenchannels.err) for i=1:nchildren(pipe))
+	selferr || childrenerr
+end
+function checkerror(::TopTreeNode,pipe::BranchChannel)
+	any(take!(pipe.childrenchannels.err) for i=1:nchildren(pipe))
+end
+
+function reduceTreeNode(freduce::Function,node::ReductionNode,
+	pipe::BranchChannel{<:Any,Tred},
+	ifsort::Ordering,progress::Union{Nothing,RemoteChannel}) where {Tred}
 	# This function that communicates with the parent and children
 
 	# Start by checking if there is any error locally in the map,
 	# and if there's none then check if there are any errors on the children
-	if rank > 0
-		anyerr = take!(pipe.selfchannels.err)
-	else
-		anyerr = false
-	end
-	anyerr = anyerr || 
-		any(take!(pipe.childrenchannels.err) for i=1:nchildren(pipe))
-
+	anyerr = checkerror(node,pipe)
+	rank = node.rank
 	# Evaluate the reduction only if there's no error
 	# In either case push the error flag to the parent
 	if !anyerr
 		try
-			res = reducedvalue(freduce,rank,pipe,ifsort) :: Tred
+			res = reducedvalue(freduce,node,pipe,ifsort) :: Tred
 			put!(pipe.parentchannels.out,res)
 			put!(pipe.parentchannels.err,false)
 			indicatereduceprogress!(progress,rank)
@@ -170,7 +209,7 @@ function return_unless_error(r::RemoteChannelContainer)
 	end
 end
 
-@inline function return_unless_error(b::BranchChannel)
+function return_unless_error(b::BranchChannel)
 	return_unless_error(b.parentchannels)
 end
 
@@ -193,19 +232,22 @@ function pmapreduceworkers(fmap::Function,freduce::Function,iterators::Tuple,
 
 		for (ind,mypipe) in enumerate(branches)
 			p = mypipe.p
-			rank = ind - extrareducenodes
-			if rank > 0
+			ind_reduced = ind - extrareducenodes
+			rank = ind_reduced
+			if ind_reduced > 0
 				iterable_on_proc = ProductSplit(iterators,num_workers_active,rank)
 
 				@spawnat p mapTreeNode(fmap,iterable_on_proc,rank,mypipe,
-					ifelse(showprogress,progresschannel,nothing),
+					showprogress ? progresschannel : nothing,
 					args...;kwargs...)
 
-				@spawnat p reduceTreeNode(freduce,rank,mypipe,ord,
-					ifelse(showprogress,progresschannel,nothing))
+				@spawnat p reduceTreeNode(freduce,SubTreeNode(rank),
+					mypipe,ord,
+					showprogress ? progresschannel : nothing)
 			else
-				@spawnat p reduceTreeNode(freduce,rank,mypipe,ord,
-					ifelse(showprogress,progresschannel,nothing))
+				@spawnat p reduceTreeNode(freduce,TopTreeNode(rank),
+					mypipe,ord,
+					showprogress ? progresschannel : nothing)
 			end
 		end
 

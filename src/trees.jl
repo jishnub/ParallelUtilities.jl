@@ -32,8 +32,7 @@ struct SequentialBinaryTree{T<:AbstractVector{<:Integer}} <: BinaryTree
 		(N >=1) || throw(DomainError(N,
 			"need at least one node to create a binary tree"))
 
-		h = floor(Int,log2(N)) # Number of levels of the tree (starting from zero)
-		Ninternalnodes = (1 << h) - 1
+		Ninternalnodes = prevpow(2,N) - 1
 		Nleaf = N - Ninternalnodes
 		Nonechildinternalnodes = (Ninternalnodes > 0) ? rem(Nleaf,2) : 0
 		twochildendind = div(N-1, 2)

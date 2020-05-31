@@ -328,7 +328,7 @@ julia> @btime last($ps_long)
 (3000, 3000, 1200)
 ```
 
-We may also compute the index of a particular set of parameters in the iterator. This is somewhat slower and is evaluated in `O(log(n))` time using a binary search. Whether or not the value exists in the list may however be evaluated in `O(1)` time.
+We may evaluate whether or not a value exists in the list and its index in `O(1)` time.
 
 ```julia
 julia> val = (3,3,4)
@@ -343,11 +343,11 @@ julia> localindex(ps,val)
 julia> val=(10,2,901);
 
 julia> @btime $val in $ps_long
-  67.824 ns (0 allocations: 0 bytes)
+  50.183 ns (0 allocations: 0 bytes)
 true
 
-julia> @btime localindex($ps_long,$val)
-  1.036 μs (0 allocations: 0 bytes)
+julia> @btime localindex($ps_long, $val)
+  104.513 ns (0 allocations: 0 bytes)
 3010
 ```
 
