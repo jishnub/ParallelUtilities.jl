@@ -333,8 +333,73 @@ function _checknorollover(t,firstindchild,lastindchild)
 end
 _checknorollover(::Tuple{},::Tuple{},::Tuple{}) = true
 
+function _nrollovers(ps::AbstractConstrainedProduct{<:Any,N},dim::Integer) where {N}
+	dim == N && return 0
+	nelements(ps,dim+1) - 1
+end
+
 """
-	maximum(ps::ProductSplit; dim::Integer)
+	nelements(ps::AbstractConstrainedProduct; dim::Integer)
+
+Compute the number of unique values in the element number `dim` of the tuples
+that are returned when `ps` is iterated over.
+
+# Examples
+```jldoctest
+julia> ps = ProductSplit((1:5,2:4,1:3),7,3);
+
+julia> collect(ps)
+7-element Array{Tuple{Int64,Int64,Int64},1}:
+ (5, 4, 1)
+ (1, 2, 2)
+ (2, 2, 2)
+ (3, 2, 2)
+ (4, 2, 2)
+ (5, 2, 2)
+ (1, 3, 2)
+
+julia> ParallelUtilities.nelements(ps,3)
+2
+
+julia> ParallelUtilities.nelements(ps,2)
+3
+
+julia> ParallelUtilities.nelements(ps,1)
+5
+```
+"""
+nelements(ps::AbstractConstrainedProduct; dim::Integer) = nelements(ps,dim)
+function nelements(ps::AbstractConstrainedProduct{<:Any,N},dim::Integer) where {N}
+	1 <= dim <= N || throw(ArgumentError("1 ⩽ dim ⩽ N=$N not satisfied for dim=$dim"))
+
+	iter = ps.iterators[dim]
+
+	if _nrollovers(ps,dim) == 0
+		st = first(ps)[dim]
+		en = last(ps)[dim]
+		stind = searchsortedfirst(iter,st)
+		enind = searchsortedfirst(iter,en)
+		nel = length(stind:enind)
+	elseif _nrollovers(ps,dim) > 1
+		nel = length(iter)
+	else
+		st = first(ps)[dim]
+		en = last(ps)[dim]
+		stind = searchsortedfirst(iter,st)
+		enind = searchsortedfirst(iter,en)
+		if stind > enind
+			# some elements are missed out
+			nel = length(stind:length(iter)) + length(1:enind)
+		else
+			nel = length(iter)
+		end
+	end
+	return nel
+end
+
+
+"""
+	maximum(ps::AbstractConstrainedProduct; dim::Integer)
 
 Compute the maximum value of the range number `dim` that is
 contained in `ps`.
@@ -355,7 +420,7 @@ julia> maximum(ps,dim=2)
 4
 ```
 """
-function Base.maximum(ps::AbstractConstrainedProduct{<:Any,N};dim::Integer) where {N}
+function Base.maximum(ps::AbstractConstrainedProduct{<:Any,N},dim::Integer) where {N}
 
 	@boundscheck (1 <= dim <= N) || throw(BoundsError(ps.iterators,dim))
 
@@ -390,7 +455,7 @@ function Base.maximum(ps::AbstractConstrainedProduct{<:Any,1})
 end
 
 """
-	minimum(ps::ProductSplit; dim::Integer)
+	minimum(ps::AbstractConstrainedProduct; dim::Integer)
 
 Compute the minimum value of the range number `dim` that is
 contained in `ps`.
@@ -411,7 +476,7 @@ julia> minimum(ps,dim=2)
 4
 ```
 """
-function Base.minimum(ps::AbstractConstrainedProduct{<:Any,N};dim::Integer) where {N}
+function Base.minimum(ps::AbstractConstrainedProduct{<:Any,N},dim::Integer) where {N}
 	
 	@boundscheck (1 <= dim <= N) || throw(BoundsError(ps.iterators,dim))
 
@@ -446,7 +511,7 @@ function Base.minimum(ps::AbstractConstrainedProduct{<:Any,1})
 end
 
 """
-	extrema(ps::ProductSplit; dim::Integer)
+	extrema(ps::AbstractConstrainedProduct; dim::Integer)
 
 Compute the minimum and maximum of the range number `dim` that is
 contained in `ps`.
@@ -467,7 +532,7 @@ julia> extrema(ps,dim=2)
 (4, 4)
 ```
 """
-function Base.extrema(ps::AbstractConstrainedProduct{<:Any,N};dim::Integer) where {N}
+function Base.extrema(ps::AbstractConstrainedProduct{<:Any,N},dim::Integer) where {N}
 	
 	@boundscheck (1 <= dim <= N) || throw(BoundsError(ps.iterators,dim))
 
@@ -501,6 +566,12 @@ function Base.extrema(ps::AbstractConstrainedProduct{<:Any,1})
 	@inbounds iter = ps.iterators[1]
 	
 	(iter[fic_dim],iter[lic_dim])
+end
+
+for f in [:maximum,:minimum,:extrema]
+	@eval function Base.$f(ps::AbstractConstrainedProduct;dim::Integer)
+		$f(ps,dim)
+	end
 end
 
 """
@@ -693,7 +764,7 @@ function whichproc(iterators, val, np::Integer)
 		# If np is greater than the number of ntasks then it's possible
 		# that ps is empty. In this case the value must be somewhere in
 		# the previous workers. Otherwise each worker has some tasks and 
-		# these are sorted, so carry out a binary seaarch
+		# these are sorted, so carry out a binary search
 
 		if isempty(ps) || val_t < ReverseLexicographicTuple(first(ps))
 			right = mid - 1

@@ -9,7 +9,8 @@
     parentnoderank, nchildren,
     maybepvalput!, createbranchchannels, nworkersactive, workersactive,
     procs_node, leafrankfoldedtree,
-    TopTreeNode, SubTreeNode, ProductSection, indexinproduct, dropleading
+    TopTreeNode, SubTreeNode, ProductSection, indexinproduct, dropleading,
+    nelements
 end
 
 macro testsetwithinfo(str,ex)
@@ -414,7 +415,43 @@ end
         @test dropleading(ps) isa ProductSection
         @test collect(dropleading(ps)) == [(4,1),(2,2),(3,2)]
         @test collect(dropleading(dropleading(ps))) == [(1,),(2,)]
+
+        ps = ProductSection((1:5,2:4,1:3),5:8);
+        @test dropleading(ps) isa ProductSection
+        @test collect(dropleading(ps)) == [(2,1),(3,1)]
+        @test collect(dropleading(dropleading(ps))) == [(1,)]
     end
+    @testset "nelements" begin
+        ps = ProductSplit((1:5,2:4,1:3),7,3);
+        @test nelements(ps,dim=1) == 5
+        @test nelements(ps,dim=2) == 3
+        @test nelements(ps,dim=3) == 2
+        @test_throws ArgumentError nelements(ps,dim=0)
+        @test_throws ArgumentError nelements(ps,dim=4)
+
+        ps = ProductSection((1:5,2:4,1:3),5:8);
+        @test nelements(ps,1) == 4
+        @test nelements(ps,2) == 2
+        @test nelements(ps,3) == 1
+
+        ps = ProductSection((1:5,2:4,1:3),5:11);
+        @test nelements(ps,1) == 5
+        @test nelements(ps,2) == 3
+        @test nelements(ps,3) == 1
+
+        ps = ProductSection((1:5,2:4,1:3),4:8);
+        @test nelements(ps,1) == 5
+        @test nelements(ps,2) == 2
+        @test nelements(ps,3) == 1
+
+        ps = ProductSection((1:5,2:4,1:3),4:9);
+        @test nelements(ps,1) == 5
+        @test nelements(ps,2) == 2
+        @test nelements(ps,3) == 1
+    end
+    
+    @test ParallelUtilities._checknorollover((),(),())
+    @test ParallelUtilities.c2l_rec(3,1,(),()) == 3
 end;
 
 @testset "ReverseLexicographicTuple" begin
@@ -856,6 +893,13 @@ end;
                     @test_throws BoundsError(tree,16) nchildren(tree,16)
                 end;
             end;
+
+            @testset "fulltree-toptree indexing" begin
+                procs = 1:5
+                tree = SequentialBinaryTree(procs)
+                @test ParallelUtilities.toptree_to_fulltree_index(tree,3) == 3
+                @test ParallelUtilities.fulltree_to_toptree_index(tree,3) == 3
+            end
         end
 
         @testsetwithinfo "SegmentedOrderedBinaryTree" begin
@@ -1060,6 +1104,11 @@ end;
                     @test_throws BoundsError(tree,16) nchildren(tree,16)
                 end;
             end;
+        end
+
+        @testsetwithinfo "unsegmentedtree" begin
+            @test ParallelUtilities.unsegmentedtree(SegmentedSequentialBinaryTree) == SequentialBinaryTree
+            @test ParallelUtilities.unsegmentedtree(SegmentedOrderedBinaryTree) == OrderedBinaryTree
         end
     end
     
@@ -1496,10 +1545,9 @@ end;
             @test take!(pipe.selfchannels.out) == pval(rank,Int[1])
         end
 
-        function test_on_pipe(fn,iterator,pipe,result_expected)
-            progressrc = nothing
+        function test_on_pipe(fn,iterator,pipe,result_expected,progressrc=nothing)
             rank = 1
-            @test_throws ErrorException mapTreeNode(x->error(""),iterator,rank,pipe,progressrc)
+            @test_throws ErrorException mapTreeNode(x->error("fmap"),iterator,rank,pipe,progressrc)
             @test !isready(pipe.selfchannels.out) # should not have any result as there was an error
             @test isready(pipe.selfchannels.err)
             @test take!(pipe.selfchannels.err) # error flag should be true
@@ -1508,6 +1556,10 @@ end;
             @test !isready(pipe.parentchannels.err)
             @test !isready(pipe.childrenchannels.out)
             @test !isready(pipe.childrenchannels.err)
+            if progressrc isa RemoteChannel
+                @test isready(progressrc)
+                @test take!(progressrc) == (false,false,rank)
+            end
 
             mapTreeNode(fn,iterator,rank,pipe,progressrc)
             @test isready(pipe.selfchannels.err)
@@ -1520,6 +1572,10 @@ end;
             @test !isready(pipe.parentchannels.err)
             @test !isready(pipe.childrenchannels.out)
             @test !isready(pipe.childrenchannels.err)
+            if progressrc isa RemoteChannel
+                @test isready(progressrc)
+                @test take!(progressrc) == (true,false,rank)
+            end
         end
 
         @testset "range" begin
@@ -1527,6 +1583,10 @@ end;
             
             pipe = BranchChannel{Int,Int}(myid(),0)
             test_on_pipe(sum,iterator,pipe,sum(iterator))
+
+            pipe = BranchChannel{Int,Int}(myid(),0)
+            progress = RemoteChannel(()->Channel{Tuple{Bool,Bool,Int}}(1))
+            test_on_pipe(sum,iterator,pipe,sum(iterator),progress)
         end
         
         @testset "ProductSplit" begin
@@ -1652,7 +1712,7 @@ end;
                 end
             end
 
-            end
+            end # everwhere
 
             @testset "reducedvalue" begin
 
@@ -1769,31 +1829,35 @@ end;
                     @test pipe.childrenchannels.err.where == 0
                 end
 
+                strippedrank(t::ParallelUtilities.ReductionNode) = t.rank
+                strippedrank(t::Integer) = t
+
                 function testreduction(freduce::Function,pipe::BranchChannel,
-                    ifsorted::Ordering,res_exp,rank,args...)
+                    ifsorted::Ordering,res_exp,rank,
+                    progressrc=nothing,args...)
 
                     @test !isready(pipe.parentchannels.out)
                     @test !isready(pipe.parentchannels.err)
 
-                    progressrc = nothing
+                    wait(@spawnat(pipe.p,
+                        putselfchildren!(pipe,ifsorted,rank,args...) ) )
+                    reduceTreeNode(freduce,rank,pipe,ifsorted,progressrc)
 
-                    try
-                        wait(@spawnat(pipe.p,
-                            putselfchildren!(pipe,ifsorted,rank,args...) ) )
-                        reduceTreeNode(freduce,rank,pipe,ifsorted,progressrc)
-                    catch
-                        rethrow()
-                    end
                     @test isready(pipe.parentchannels.out)
                     @test isready(pipe.parentchannels.err)
                     @test !take!(pipe.parentchannels.err) # there should be no error
                     @test value(take!(pipe.parentchannels.out)) == res_exp
 
+                    if progressrc isa RemoteChannel
+                        @test isready(progressrc)
+                        @test take!(progressrc) == (false,true,strippedrank(rank))
+                    end
+
                     # The pipe should be finalized at this point
                     testfinalized(rank,pipe)
                 end
 
-                end
+                end # everywhere
 
                 for n = 1:2
                     @testset "Unsorted" begin
@@ -1806,6 +1870,19 @@ end;
 
                         pipe = BranchChannel{Int,Int}(myid(),n)
                         testreduction(sum,pipe,Unsorted(),res_exp,TopTreeNode(0))
+
+                        pipe = BranchChannel{Int,Int}(myid(),n)
+                        progress = RemoteChannel(()->Channel{Tuple{Bool,Bool,Int}}(1))
+                        @test_throws ErrorException testreduction(
+                            x->error("fred"),pipe,Unsorted(),
+                            res_exp,TopTreeNode(0),progress)
+                        @test isready(progress)
+                        @test take!(progress) == (false,false,0)
+
+                        pipe = BranchChannel{Int,Int}(myid(),n)
+                        progress = RemoteChannel(()->Channel{Tuple{Bool,Bool,Int}}(1))
+                        testreduction(sum,pipe,Unsorted(),
+                            res_exp,TopTreeNode(0),progress)
 
                         rc_parent = RemoteChannelContainer{Int}(1)
                         p = workers()[1]
