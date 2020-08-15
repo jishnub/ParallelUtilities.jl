@@ -13,6 +13,8 @@
     nelements
 end
 
+@test isempty(Test.detect_ambiguities(Base, Core, ParallelUtilities))
+
 macro testsetwithinfo(str,ex)
     quote
         @info "Testing "*$str
@@ -57,12 +59,13 @@ end
     	    function checkPSconstructor(iters,npmax=10)
     	    	ntasks_total = prod(length.(iters))
     			for np = 1:npmax, p = 1:np
-    		        ps = ProductSplit(iters,np,p)
+    		        ps = ProductSplit(iters, np, p)
                     @test eltype(ps) == Tuple{eltype.(iters)...}
+                    @test ndims(ps) == length(iters)
     		        @test collect(ps) == collect(split_product_across_processors_iterators(iters,np,p))
     		        @test ntasks(ps) == ntasks_total
     		        @test ntasks(ps.iterators) == ntasks_total
-    		        @test eltype(ps) == Tuple{map(eltype,iters)...}
+                    @test ParallelUtilities.workerrank(ps) == p
     		    end
 
     		    @test_throws ParallelUtilities.ProcessorNumberError ProductSplit(iters,npmax,npmax+1)
@@ -134,9 +137,10 @@ end
     		    end
         	end
 
-            @testset "summary" begin
-                ps = ProductSplit((1:3, 4:5:19),3,2)
-                reprstr = "ProductSplit("*repr((1:3, 4:5:19))*",3,2)"
+            @testset "summary and show" begin
+                iters = (1:3, 4:5:19)
+                ps = ProductSplit(iters,3,2)
+                reprstr = "ProductSplit("*repr(iters)*", 3, 2)"
                 @test ParallelUtilities.mwerepr(ps) == reprstr
 
                 summarystr = "$(length(ps))-element "*reprstr
@@ -145,6 +149,9 @@ end
                 io = IOBuffer()
                 summary(io,ps)
                 @test String(take!(io)) == summarystr
+
+                show(io, ps)
+                @test String(take!(io)) == reprstr
             end
         end
 
@@ -1964,11 +1971,6 @@ end
 
 @testset "pmapbatch and pmapreduce" begin
 
-	exceptiontype = RemoteException
-	if VERSION >= v"1.3"
-		exceptiontype = CompositeException
-	end
-
 	@testsetwithinfo "pmapbatch" begin
 		@testsetwithinfo "batch" begin
 			@testset "comparison with map" begin
@@ -2002,8 +2004,24 @@ end
 				@test res == resexp			    
 			end
 
+            @testset "multiple iterators" begin
+                res = pmapbatch(tup->[((x,y), x+y) for (x,y) in tup], (1:2,1:2))
+                @test res == [((1, 1), 2), ((2, 1), 3), ((1, 2), 3), ((2, 2), 4)]
+
+                xrange, yrange, zrange = 1:2, 2:3, 3:4
+                p = pmapbatch(ps->[sum(tup) for tup in ps], (xrange,yrange,zrange));
+                @test p == [6,7,7,8,7,8,8,9]
+            end
+
+            @testset "return type specified" begin
+                iterable = 1:nworkers()
+                @test pmapbatch(ParallelUtilities.workerrank, Int, iterable) == iterable
+                @test pmapbatch(ParallelUtilities.workerrank, Float64, iterable) == Float64.(iterable)
+                @test_throws Exception pmapbatch(ParallelUtilities.workerrank, Vector{Int}, iterable)
+            end
+
 			@testset "errors" begin
-			    @test_throws exceptiontype pmapbatch(x->throw(BoundsError()),1:10)
+			    @test_throws Exception pmapbatch(x->throw(BoundsError()),1:10)
 			end
 		end
 		
@@ -2021,8 +2039,14 @@ end
 			    @test res == iterable.^2
 			end
 
+            @testset "multiple iterators" begin
+                xrange, yrange, zrange = 1:2, 2:3, 3:4
+                p = pmapbatch_elementwise((x,y,z)->x+y+z, (xrange,yrange,zrange));
+                @test p == [6,7,7,8,7,8,8,9]
+            end
+
 		    @testset "errors" begin
-			    @test_throws exceptiontype pmapbatch_elementwise(x->throw(BoundsError()),1:10)
+			    @test_throws Exception pmapbatch_elementwise(x->throw(BoundsError()),1:10)
 			end
 		end
 	end;
@@ -2096,8 +2120,8 @@ end
 		    end;
 
 		    @testset "errors" begin
-		        @test_throws exceptiontype pmapsum(x->error("map"),1:10)
-                @test_throws exceptiontype pmapsum(x->fmap(x),1:10)
+		        @test_throws Exception pmapsum(x->error("map"),1:10)
+                @test_throws Exception pmapsum(x->fmap(x),1:10)
 		    end
 		end
 
@@ -2152,12 +2176,12 @@ end
 		    end;
 
 		    @testset "errors" begin
-		        @test_throws exceptiontype pmapsum_elementwise(x->error("hi"),1:10)
+		        @test_throws Exception pmapsum_elementwise(x->error("hi"),1:10)
 		    end
 		end
 
         @testset "type coercion" begin
-            @test_throws exceptiontype pmapsum(x->[1.1],Vector{Int},1:nworkers())
+            @test_throws Exception pmapsum(x->[1.1],Vector{Int},1:nworkers())
             @test pmapsum(x->ones(2).*myid(),Vector{Int},1:nworkers()) isa Vector{Int}
         end
 	end;
@@ -2216,23 +2240,23 @@ end
 		    end
 
 		    @testset "errors" begin
-		        @test_throws exceptiontype pmapreduce_commutative(
+		        @test_throws Exception pmapreduce_commutative(
 												x->error("map"),sum,1:10)
-		        @test_throws exceptiontype pmapreduce_commutative(
+		        @test_throws Exception pmapreduce_commutative(
 												identity,x->error("reduce"),1:10)
-				@test_throws exceptiontype pmapreduce_commutative(
+				@test_throws Exception pmapreduce_commutative(
 												x->error("map"),x->error("reduce"),1:10)
 
-                @test_throws exceptiontype pmapreduce_commutative(
+                @test_throws Exception pmapreduce_commutative(
                                                 x->fmap("map"),sum,1:10)
-                @test_throws exceptiontype pmapreduce_commutative(
+                @test_throws Exception pmapreduce_commutative(
                                                 x->1,x->fred(x),1:10)
-                @test_throws exceptiontype pmapreduce_commutative(
+                @test_throws Exception pmapreduce_commutative(
                                                 x->fmap(x),x->fred(x),1:10)
 		    end
 
             @testset "type coercion" begin
-                @test_throws exceptiontype pmapreduce_commutative(x->[1.1],Vector{Int},
+                @test_throws Exception pmapreduce_commutative(x->[1.1],Vector{Int},
                                                 sum,Vector{Int},1:nworkers())
                 res = pmapreduce_commutative(x->ones(2).*myid(),Vector{Int},sum,Vector{Int},1:nworkers())
                 @test res isa Vector{Int}
@@ -2290,11 +2314,11 @@ end
 		    end
 
 			@testsetwithinfo "errors" begin
-				@test_throws exceptiontype pmapreduce_commutative_elementwise(
+				@test_throws Exception pmapreduce_commutative_elementwise(
 												x->error("map"),sum,1:10)
-				@test_throws exceptiontype pmapreduce_commutative_elementwise(
+				@test_throws Exception pmapreduce_commutative_elementwise(
 												identity,x->error("reduce"),1:10)
-				@test_throws exceptiontype pmapreduce_commutative_elementwise(
+				@test_throws Exception pmapreduce_commutative_elementwise(
 												x->error("map"),
 												x->error("reduce"),1:10)
 			end
@@ -2401,16 +2425,16 @@ end
 		    end;
 
 			@testset "errors" begin
-			    @test_throws exceptiontype pmapreduce(x->error("map"),sum,1:10)
-				@test_throws exceptiontype pmapreduce(identity,x->error("reduce"),1:10)
-				@test_throws exceptiontype pmapreduce(x->error("map"),x->error("reduce"),1:10)
-                @test_throws exceptiontype pmapreduce(x->fmap(x),sum,1:10)
-                @test_throws exceptiontype pmapreduce(x->1,x->fred(x),1:10)
-                @test_throws exceptiontype pmapreduce(x->fmap(x),x->fred(x),1:10)
+			    @test_throws Exception pmapreduce(x->error("map"),sum,1:10)
+				@test_throws Exception pmapreduce(identity,x->error("reduce"),1:10)
+				@test_throws Exception pmapreduce(x->error("map"),x->error("reduce"),1:10)
+                @test_throws Exception pmapreduce(x->fmap(x),sum,1:10)
+                @test_throws Exception pmapreduce(x->1,x->fred(x),1:10)
+                @test_throws Exception pmapreduce(x->fmap(x),x->fred(x),1:10)
 			end;
 
             @testset "type coercion" begin
-                @test_throws exceptiontype pmapreduce(x->[1.1],Vector{Int},sum,Vector{Int},1:nworkers())
+                @test_throws Exception pmapreduce(x->[1.1],Vector{Int},sum,Vector{Int},1:nworkers())
                 @test pmapreduce(x->ones(2).*myid(),Vector{Int},sum,Vector{Int},1:nworkers()) isa Vector{Int}
             end;
 		end;
@@ -2460,5 +2484,5 @@ end;
         show(io,b)
         strexp = "BinaryTreeNode(p = 2, parent = 3, nchildren = 1)"
         @test String(take!(io)) == strexp
-    end
+    end;
 end;

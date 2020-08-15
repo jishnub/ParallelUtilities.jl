@@ -1,3 +1,4 @@
 Manifest.toml
 *.cov
 coverage
+docs/build
