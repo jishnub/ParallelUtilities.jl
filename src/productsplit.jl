@@ -1,3 +1,8 @@
+"""
+	ParallelUtilities.AbstractConstrainedProduct{T,N}
+
+Supertype of [`ParallelUtilities.ProductSplit`](@ref) and [`ParallelUtilities.ProductSection`](@ref).
+"""
 abstract type AbstractConstrainedProduct{T,N} end
 Base.eltype(::AbstractConstrainedProduct{T}) where {T} = T
 Base.ndims(::AbstractConstrainedProduct{<:Any,N}) where {N} = N
@@ -132,7 +137,7 @@ ProductSplit(::Tuple{},::Integer,::Integer) = throw(ArgumentError("Need at least
 """
 	ProductSection(iterators::Tuple{Vararg{AbstractRange}}, inds::AbstractUnitRange)
 
-Construct a `ProductSection` iterator that represents a view of the outer product
+Construct a `ProductSection` iterator that represents a 1D view of the outer product
 of the ranges provided in `iterators`, with the range of indices in the view being
 specified by `inds`.
 
@@ -147,7 +152,7 @@ julia> collect(p)
  (1, 6)
  (2, 6)
 
-julia> collect(p) == collect(Iterators.product(1:3,4:6))[5:8]
+julia> collect(p) == collect(Iterators.product(1:3, 4:6))[5:8]
 true
 ```
 """
@@ -206,7 +211,7 @@ outer product of the iterators.
 
 # Examples
 ```jldoctest
-julia> ps = ProductSplit((1:5,2:4,1:3),7,1);
+julia> ps = ProductSplit((1:5, 2:4, 1:3), 7, 1);
 
 julia> ParallelUtilities.childindex(ps, 6)
 (1, 2, 1)
@@ -241,9 +246,9 @@ given an index of a `AbstractConstrainedProduct`.
 
 # Examples
 ```jldoctest
-julia> ps = ProductSplit((1:5,2:4,1:3), 7, 3);
+julia> ps = ProductSplit((1:5, 2:4, 1:3), 7, 3);
 
-julia> cinds = ParallelUtilities.childindexshifted(ps,3)
+julia> cinds = ParallelUtilities.childindexshifted(ps, 3)
 (2, 1, 2)
 
 julia> getindex.(ps.iterators, cinds) == ps[3]
@@ -341,12 +346,11 @@ end
 	ParallelUtilities.nelements(ps::AbstractConstrainedProduct; dim::Integer)
 	ParallelUtilities.nelements(ps::AbstractConstrainedProduct, dim::Integer)
 
-Compute the number of unique values in the element number `dim` of the tuples
-that are returned when `ps` is iterated over.
+Compute the number of unique values in the section of the `dim`-th range contained in `ps`.
 
 # Examples
 ```jldoctest
-julia> ps = ProductSplit((1:5,2:4,1:3),7,3);
+julia> ps = ProductSplit((1:5, 2:4, 1:3), 7, 3);
 
 julia> collect(ps)
 7-element Array{Tuple{Int64,Int64,Int64},1}:
@@ -358,14 +362,14 @@ julia> collect(ps)
  (5, 2, 2)
  (1, 3, 2)
 
-julia> ParallelUtilities.nelements(ps,3)
-2
+julia> ParallelUtilities.nelements(ps, 1)
+5
 
-julia> ParallelUtilities.nelements(ps,2)
+julia> ParallelUtilities.nelements(ps, 2)
 3
 
-julia> ParallelUtilities.nelements(ps,1)
-5
+julia> ParallelUtilities.nelements(ps, 3)
+2
 ```
 """
 nelements(ps::AbstractConstrainedProduct; dim::Integer) = nelements(ps,dim)
@@ -402,8 +406,7 @@ end
 	maximum(ps::AbstractConstrainedProduct; dim::Integer)
 	maximum(ps::AbstractConstrainedProduct, dim::Integer)
 
-Compute the maximum value of the range number `dim` that is
-contained in `ps`.
+Compute the maximum value of the section of the `dim`-th range contained in `ps`.
 
 # Examples
 ```jldoctest
@@ -457,12 +460,11 @@ end
 	minimum(ps::AbstractConstrainedProduct; dim::Integer)
 	minimum(ps::AbstractConstrainedProduct, dim::Integer)
 
-Compute the minimum value of the range number `dim` that is
-contained in `ps`.
+Compute the minimum value of the section of the `dim`-th range contained in `ps`.
 
 # Examples
 ```jldoctest
-julia> ps = ProductSplit((1:2,4:5), 2, 1);
+julia> ps = ProductSplit((1:2, 4:5), 2, 1);
 
 julia> collect(ps)
 2-element Array{Tuple{Int64,Int64},1}:
@@ -512,12 +514,11 @@ end
 	extrema(ps::AbstractConstrainedProduct; dim::Integer)
 	extrema(ps::AbstractConstrainedProduct, dim::Integer)
 
-Compute the minimum and maximum of the range number `dim` that is
-contained in `ps`.
+Compute the `extrema` of the section of the `dim`-th range contained in `ps`.
 
 # Examples
 ```jldoctest
-julia> ps = ProductSplit((1:2,4:5), 2, 1);
+julia> ps = ProductSplit((1:2, 4:5), 2, 1);
 
 julia> collect(ps)
 2-element Array{Tuple{Int64,Int64},1}:
@@ -574,11 +575,11 @@ end
 """
 	extremadims(ps::AbstractConstrainedProduct)
 
-Compute the extrema of all the ranges contained in `ps`.
+Compute the extrema of the sections of all the ranges contained in `ps`.
 
 # Examples
 ```jldoctest
-julia> ps = ProductSplit((1:2,4:5), 2, 1);
+julia> ps = ProductSplit((1:2, 4:5), 2, 1);
 
 julia> collect(ps)
 2-element Array{Tuple{Int64,Int64},1}:
@@ -601,9 +602,9 @@ _extremadims(::AbstractConstrainedProduct, ::Integer, ::Tuple{}) = ()
 
 Return the reverse-lexicographic extrema of values taken from 
 ranges contained in `ps`, where the pairs of ranges are constructed 
-by concatenating each dimension with the last one.
+by concatenating the ranges along each dimension with the last one.
 
-For two ranges this simply returns ([first(ps)],[last(ps)]).
+For two ranges this simply returns `([first(ps)], [last(ps)])`.
 
 # Examples
 ```jldoctest
@@ -791,7 +792,7 @@ the ranges in `iterators`.
 
 # Examples
 ```jldoctest
-julia> iters = (1:10,4:6,1:4);
+julia> iters = (1:10, 4:6, 1:4);
 
 julia> ps = ProductSplit(iters, 5, 2);
 
@@ -833,7 +834,7 @@ is not found.
 
 # Examples
 ```jldoctest
-julia> ps = ProductSplit((1:3,4:5:20), 3, 2);
+julia> ps = ProductSplit((1:3, 4:5:20), 3, 2);
 
 julia> collect(ps)
 4-element Array{Tuple{Int64,Int64},1}:
@@ -902,7 +903,7 @@ resulting `ProductSection` will be the same as in `ps`.
 
 # Examples
 ```jldoctest
-julia> ps = ProductSplit((1:5,2:4,1:3),7,3);
+julia> ps = ProductSplit((1:5, 2:4, 1:3), 7, 3);
 
 julia> collect(ps)
 7-element Array{Tuple{Int64,Int64,Int64},1}:

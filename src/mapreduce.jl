@@ -305,10 +305,9 @@ or iterate over one to access individual tuples of integers.
 
 The reduction function `freduce` is expected to accept a collection of mapped values.
 Note that this is different from the standard `mapreduce` operation in julia that 
-expects a binary reduction operator. For example, `fmap` should be 
-`sum` and not `+`. In case a binary operator `op` is to be passed, one may wrap it in
-an anonymous function as `x->reduce(op,x)`, or as `x->op(x...)` in case the operator
-accepts multiple arguments that are processed in pairs.
+expects a binary reduction operator. For example, `freduce` should be 
+`sum` and not `+`. In case a binary operator `op` is to be used in the reduction, one may pass it 
+as `Base.splat(op)` or wrap it in an anonymous function as `x -> op(x...)`.
 
 Arguments `mapargs` and keyword arguments `mapkwargs` — if provided — are 
 passed on to the mapping function `fmap`.
@@ -368,10 +367,9 @@ results obtained may be incorrect otherwise.
 
 The reduction function `freduce` is expected to accept a collection of mapped values.
 Note that this is different from the standard `mapreduce` operation in julia that 
-expects a binary reduction operator. For example, `fmap` should be 
-`sum` and not `+`. In case a binary operator `op` is to be passed, one may wrap it in
-an anonymous function as `x->reduce(op,x)`, or as `x->op(x...)` in case the operator
-accepts multiple arguments that are processed in pairs.
+expects a binary reduction operator. For example, `freduce` should be 
+`sum` and not `+`. In case a binary operator `op` is to be used in the reduction, one may pass it 
+as `Base.splat(op)` or wrap it in an anonymous function as `x -> op(x...)`.
 
 Arguments `mapargs` and keyword arguments `mapkwargs` — if provided — are 
 passed on to the mapping function `fmap`.
@@ -513,9 +511,8 @@ or iterate over one to access individual tuples of integers.
 The reduction function `freduce` is expected to accept a collection of mapped values.
 Note that this is different from the standard `mapreduce` operation in julia that 
 expects a binary reduction operator. For example, `fmap` should be 
-`sum` and not `+`. In case a binary operator `op` is to be passed, one may wrap it in
-an anonymous function as `x->reduce(op,x)`, or as `x->op(x...)` in case the operator
-accepts multiple arguments that are processed in pairs.
+`sum` and not `+`. In case a binary operator `op` is to be used in the reduction, one may pass it 
+as `Base.splat(op)` or wrap it in an anonymous function as `x -> op(x...)`.
 
 Arguments `mapargs` and keyword arguments `mapkwargs` — if provided — are 
 passed on to the mapping function `fmap`.
@@ -573,10 +570,9 @@ part of the entire parameter space sequentially. The argument
 `iterators` needs to be a strictly-increasing range,
 or a tuple of such ranges. The outer product of these ranges forms the 
 entire range of parameters that is processed in batches on 
-the workers.
-
-Arguments `mapargs` and keyword arguments `mapkwargs` — if provided — are 
+the workers. Arguments `mapargs` and keyword arguments `mapkwargs` — if provided — are 
 passed on to the function `f`. 
+
 Additionally, the number of workers to be used may be specified using the 
 keyword argument `num_workers`. In this case the first `num_workers` available
 workers are used in the evaluation.
@@ -597,7 +593,7 @@ function pmapbatch(f::Function, iterators::Tuple, args...;
 end
 
 function pmapbatch(f::Function, ::Type{T}, iterators::Tuple, args...;
-	num_workers = nworkersactive(iterators),kwargs...) where {T}
+	num_workers = nworkersactive(iterators), kwargs...) where {T}
 
 	procs_used = workersactive(iterators)
 	if num_workers < length(procs_used)
@@ -634,7 +630,8 @@ part of the entire parameter space sequentially. The argument
 `iterators` needs to be a strictly-increasing range of intergers,
 or a tuple of such ranges. The outer product of these ranges forms the 
 entire range of parameters that is processed elementwise by the function `f`.
-Given `n` ranges in `iterators`, the function `f` will receive `n` integers 
+The individual tuples are splatted and passed as arguments to `f`.
+Given `n` ranges in `iterators`, the function `f` will receive `n` values 
 at a time.
 
 Arguments `mapargs` and keyword arguments `mapkwargs` — if provided — are 

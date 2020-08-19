@@ -41,6 +41,22 @@ julia> pmapsum(x -> ones(2).*myid(), 1:nworkers())
  5.0
 ```
 
+# Performance
+
+The `pmapreduce`-related functions are expected to be more performant than `@distributed` for loops. As an example, running the following on a Slurm cluster using 2 nodes with 28 cores on each leads to
+
+```julia
+julia> @time @distributed (+) for i=1:nworkers()
+           ones(10_000, 1_000)
+       end;
+ 22.355047 seconds (7.05 M allocations: 8.451 GiB, 6.73% gc time)
+
+julia> @time pmapsum(x -> ones(10_000, 1_000), 1:nworkers());
+  2.672838 seconds (52.83 k allocations: 78.295 MiB, 0.53% gc time)
+```
+
+The difference becomes more apparent as larger data needs to be communicated across workers. This is because `ParallelUtilities.pmapreduce*` perform local reductions on each node before communicating across nodes.
+
 # Usage
 
 The package splits up a collection of ranges into subparts of roughly equal length, so that all the cores are approximately equally loaded. This is best understood using an example: let's say that we have a function `f` that is defined as   
@@ -82,7 +98,7 @@ The first six processors receive 4 tuples of parameters each and the final four 
 
 The package provides versions of `pmap` with an optional reduction. These differ from the one provided by `Distributed` in a few key aspects: firstly, the iterator product of the argument is what is passed to the function and not the arguments by elementwise, so the i-th task will be `Iterators.product(args...)[i]` and not `[x[i] for x in args]`. Specifically the second set of parameters in the example above will be `(2,2,3)` and not `(2,3,4)`.
 
-Secondly, the iterator is passed to the function in batches and not elementwise, and it is left to the function to iterate over the collection. Thirdly, the tasks are passed on to processors sorted by rank, so the first task is passed to the first processor and the last to the last active worker. The tasks are also approximately evenly distributed across processors. The function `pmapbatch_elementwise` is also exported that passes the elements to the function one-by-one as unwrapped tuples. This produces the same result as `pmap` where each worker is assigned batches of approximately equal sizes taken from the iterator product.
+Secondly, the iterator is passed to the function in batches and not elementwise, and it is left to the function to iterate over the collection. Thirdly, the tasks are passed on to processors sorted by rank, so the first task is passed to the first processor and the last to the last active worker. The tasks are also approximately evenly distributed across processors. The exported function `pmapbatch_elementwise` passes the elements to the function one-by-one as splatted tuples. This produces the same result as `pmap` for a single range as the argument.
 
 ### pmapbatch and pmapbatch_elementwise
 
@@ -106,7 +122,7 @@ julia> Tuple(p)
 
 ### pmapsum and pmapreduce
 
-Often a parallel execution is followed by a reduction (eg. a sum over the results). A reduction may be commutative (in which case the order of results do not matter), or non-commutative (in which the order does matter). There are two functions that are exported that carry out these tasks: `pmapreduce_commutative` and `pmapreduce`, where the former does not preserve ordering and the latter does. For convenience, the package also provides the function `pmapsum` that chooses `sum` as the reduction operator. The map-reduce operation is similar in many ways to the distributed `for` loop provided by julia, but the main difference is that the reduction operation is not binary for the functions in this package (eg. we need `sum` and not `(+)`to add the results). There is also the difference as above that the function gets the parameters in batches, with functions having the suffix `_elementwise` taking on parameters individually as unwrapped tuples as above. The function `pmapreduce` does not take on parameters elementwise at this point, although this might be implemented in the future.
+Often a parallel execution is followed by a reduction (eg. a sum over the results). A reduction may be commutative (in which case the order of results do not matter), or non-commutative (in which the order does matter). There are two functions that are exported that carry out these tasks: `pmapreduce_commutative` and `pmapreduce`, where the former does not preserve ordering and the latter does. For convenience, the package also provides the function `pmapsum` that chooses `sum` as the reduction operator. The map-reduce operation is similar in many ways to the distributed `for` loop provided by julia, but the main difference is that the reduction operation is not binary for the functions in this package (eg. we need `sum` and not `(+)`to add the results). There is also the difference as above that the function gets the parameters in batches, with functions having the suffix `_elementwise` taking on parameters individually as splatted `Tuple`s. The function `pmapreduce` does not take on parameters elementwise at this point, although this might be implemented in the future.
 
 As an example, to sum up a list of numbers in parallel we may call
 ```julia
@@ -137,7 +153,7 @@ julia> workers()
  2
  3
 
-# The signature is pmapreduce(fmap,freduce,iterable)
+# The signature is pmapreduce(fmap, freduce, range_or_tuple_of_ranges)
 julia> pmapreduce(x -> ones(2).*myid(), x -> hcat(x...), 1:nworkers())
 2×2 Array{Float64,2}:
  2.0  3.0
@@ -146,7 +162,7 @@ julia> pmapreduce(x -> ones(2).*myid(), x -> hcat(x...), 1:nworkers())
 
 The functions `pmapreduce` produces the same result as `pmapreduce_commutative` if the reduction operator is commutative (ie. the order of results received from the children workers does not matter).
 
-The function `pmapsum` sets the reduction operator to be a sum.
+The function `pmapsum` sets the reduction function to `sum`.
 
 ```julia
 julia> sum(workers())
@@ -162,13 +178,13 @@ julia> pmapsum(x -> ones(2).*myid(), 1:nworkers())
 It is possible to specify the return types of the map and reduce operations in these functions. To specify the return types use the following variants:
 
 ```julia
-# Signature is pmapreduce(fmap, Tmap, freduce, Treduce, iterators)
+# Signature is pmapreduce(fmap, Tmap, freduce, Treduce, range_or_tuple_of_ranges)
 julia> pmapreduce(x -> ones(2).*myid(), Vector{Float64}, x -> hcat(x...), Matrix{Float64}, 1:nworkers())
 2×2 Array{Float64,2}:
  2.0  3.0
  2.0  3.0
 
-# Signature is pmapsum(fmap, Tmap, iterators)
+# Signature is pmapsum(fmap, Tmap, range_or_tuple_of_ranges)
 julia> pmapsum(x -> ones(2).*myid(), Vector{Float64}, 1:nworkers())
 2-element Array{Float64,1}:
  5.0
@@ -244,7 +260,7 @@ julia> collect(ps)
 where the object loops over values of `(x,y,z)`, and the values are sorted in reverse lexicographic order (the last index increases the slowest while the first index increases the fastest). The ranges roll over as expected. The tasks are evenly distributed with the remainders being split among the first few processors. In this example the first six processors receive 4 tasks each and the last four receive 3 each. We can see this by evaluating the length of the `ProductSplit` operator on each processor
 
 ```julia
-julia> Tuple(length(ProductSplit((xrange,yrange,zrange),10,i)) for i=1:10)
+julia> Tuple(length(ProductSplit((xrange,yrange,zrange), 10, i)) for i=1:10)
 (4, 4, 4, 4, 4, 4, 3, 3, 3, 3)
 ```
 
@@ -268,11 +284,11 @@ julia> xrange_long,yrange_long,zrange_long = 1:3000,1:3000,1:3000
 
 julia> params_long = (xrange_long,yrange_long,zrange_long);
 
-julia> ps_long = ProductSplit(params_long,10,4)
+julia> ps_long = ProductSplit(params_long, 10, 4)
 ProductSplit{Tuple{Int64,Int64,Int64},3,UnitRange{Int64}}((1:3000, 1:3000, 1:3000), (0, 3000, 9000000), 10, 4, 8100000001, 10800000000)
 
 # Evaluate length using random ranges to avoid compiler optimizations
-julia> @btime length(p) setup=(n=rand(3000:4000);p=ProductSplit((1:n,1:n,1:n),200,2));
+julia> @btime length(p) setup = (n = rand(3000:4000); p = ProductSplit((1:n,1:n,1:n), 200, 2));
   2.674 ns (0 allocations: 0 bytes)
 
 julia> @btime $ps_long[1000000] # also fast, does not iterate

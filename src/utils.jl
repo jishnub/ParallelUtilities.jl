@@ -24,10 +24,10 @@ workers are chosen.
 	gethostnames(procs = workers())
 
 Return the hostname of each worker in `procs`. This is obtained by evaluating 
-`Libc.gethostname()` on each worker.
+`Libc.gethostname()` on each worker asynchronously.
 """
 function gethostnames(procs = workers())
-	hostnames = Vector{String}(undef,length(procs))
+	hostnames = Vector{String}(undef, length(procs))
 	@sync for (ind,p) in enumerate(procs)
 		@async hostnames[ind] = @fetchfrom p Libc.gethostname()
 	end
