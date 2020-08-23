@@ -1969,6 +1969,132 @@ end;
     end;
 end
 
+@testset "reduction functions" begin
+    @testset "sumcat_aligned" begin
+        @testset "one array" begin
+            a1 = ones(3:4)
+            a12 = ParallelUtilities.sumcat_aligned(a1, dims = 1)
+            @test a12 == a1
+            @test_throws Exception ParallelUtilities.sumcat_aligned(a1, dims = 2)
+
+            a1 = ones(3:4, 4:5)
+            a12 = ParallelUtilities.sumcat_aligned(a1, dims = 1)
+            @test a12 == a1
+            a12 = ParallelUtilities.sumcat_aligned(a1, dims = 2)
+            @test a12 == a1
+            @test_throws Exception ParallelUtilities.sumcat_aligned(a1, dims = 3)
+
+            a1 = zeros(2:4, 2:4)
+            a1[2:3, 2:3] .+= 1
+            a1[3:4, 3:4] .+= 1
+
+            a12 = ParallelUtilities.sumcat_aligned(ones(2:3,2:3), ones(3:4,3:4), dims=(1,2))
+            @test a12 == a1
+
+            a1 = zeros(2:5, 2:5)
+            a1[2:3, 2:3] .+= 1
+            a1[4:5, 4:5] .+= 1
+
+            a12 = ParallelUtilities.sumcat_aligned(ones(2:3,2:3), ones(4:5,4:5), dims=(1,2))
+            @test a12 == a1
+        end
+
+        @testset "two arrays" begin
+
+            function test(a1ax, a2ax, a12ax, dims)
+                a1 = ones(a1ax)
+                a2 = ones(a2ax)
+                a12 = ParallelUtilities.sumcat_aligned(a1, a2, dims = dims)
+                a12exp = zeros(a12ax)
+                a12exp[a1ax...] .+= 1
+                a12exp[a2ax...] .+= 1
+                @test a12 == a12exp
+            end
+
+            test((3:4,), (6:8,), (3:8,), 1)
+
+            test((3:4, 3:4), (6:8, 3:4), (3:8, 3:4), 1)
+
+            test((3:4, 3:4), (3:4, 6:8), (3:4, 3:8), 2)
+
+            test((3:4, 3:4), (4:8, 4:8), (3:8, 3:8), (1,2))
+
+            test((3:4, 3:4), (6:8, 6:8), (3:8, 3:8), (1,2))
+
+            @test_throws DimensionMismatch test((3:4, 3:4), (6:8, 3:5), (3:8, 3:5), 1)
+            @test_throws ArgumentError test((3:4, 3:4), (3:4, 3:4), (3:4, 3:4), 3)
+        end
+    end
+    @testset "sumvcat_aligned" begin
+        @testset "one array" begin
+            a1 = ones(3:4)
+            a12 = ParallelUtilities.sumvcat_aligned(a1)
+            @test a12 == a1
+
+            a1 = ones(3:4, 4:5)
+            a12 = ParallelUtilities.sumvcat_aligned(a1)
+            @test a12 == a1
+
+            @test_throws ArgumentError ParallelUtilities.sumvcat_aligned(ones())
+        end
+
+        @testset "two arrays" begin
+
+            function test(a1ax, a2ax, a12ax)
+                a1 = ones(a1ax)
+                a2 = ones(a2ax)
+                a12 = ParallelUtilities.sumvcat_aligned(a1, a2)
+                a12exp = zeros(a12ax)
+                a12exp[a1ax...] .+= 1
+                a12exp[a2ax...] .+= 1
+                @test a12 == a12exp
+            end
+
+            test((3:4,), (6:8,), (3:8,))
+
+            test((3:4, 3:4), (6:8, 3:4), (3:8, 3:4))
+
+            test((3:4, 3:4), (4:8, 3:4), (3:8, 3:4))
+
+            @test_throws ArgumentError test((), (), ())
+
+            @test_throws DimensionMismatch test((3:4, 3:4), (6:8, 3:5), (3:8, 3:5))
+        end
+    end
+    @testset "sumhcat_aligned" begin
+        @testset "one array" begin
+            a1 = ones(3:4)
+            @test_throws Exception ParallelUtilities.sumhcat_aligned(a1)
+
+            a1 = ones(3:4, 4:5)
+            a12 = ParallelUtilities.sumhcat_aligned(a1)
+            @test a12 == a1
+
+            @test_throws ArgumentError ParallelUtilities.sumhcat_aligned(ones(1:2))
+        end
+
+        @testset "two arrays" begin
+
+            function test(a1ax, a2ax, a12ax)
+                a1 = ones(a1ax)
+                a2 = ones(a2ax)
+                a12 = ParallelUtilities.sumhcat_aligned(a1, a2)
+                a12exp = zeros(a12ax)
+                a12exp[a1ax...] .+= 1
+                a12exp[a2ax...] .+= 1
+                @test a12 == a12exp
+            end
+
+            test((3:4, 3:4), (3:4, 6:8), (3:4, 3:8))
+
+            test((3:4, 3:4), (3:4, 4:8), (3:4, 3:8))
+
+            @test_throws DimensionMismatch test((3:4, 3:4), (3:5, 6:8), (3:5, 3:8))
+            @test_throws ArgumentError test((3:4,), (3:4,), (3:4))
+        end
+    end
+end
+
 @testset "pmapbatch and pmapreduce" begin
 
 	@testsetwithinfo "pmapbatch" begin
@@ -2368,6 +2494,55 @@ end
                     @test pmapreduce(x->x[1][1],x->vcat(x...),1:nworkers()) == collect(1:nworkers())
                     @test pmapreduce(x->myid(),Int,x->vcat(x...),Vector{Int},(1:nworkers(),)) == workers()
                     @test pmapreduce(x->myid(),x->vcat(x...),1:nworkers()) == workers()
+                end
+
+                @testset "sumcat_aligned" begin
+                    @testset "sumcat_aligned" begin
+                        res_vcat = zeros(Float64, 2, 1:nworkers() + 3)
+                        for ind in 1:nworkers()
+                            res_vcat[:, ind .+ (0:3)] .+= 1
+                        end
+                        out = pmapreduce(x->ones(2, ParallelUtilities.workerrank(x) .+ (0:3)), 
+                            x->ParallelUtilities.sumcat_aligned(x..., dims=2), 1:nworkers())
+                        @test out == res_vcat
+
+                        res_vcat = zeros(Float64, 1:nworkers() + 3)
+                        for ind in 1:nworkers()
+                            res_vcat[ind .+ (0:3)] .+= 1
+                        end
+                        out = pmapreduce(x->ones(ParallelUtilities.workerrank(x) .+ (0:3)), 
+                            x->ParallelUtilities.sumcat_aligned(x..., dims=1), 1:nworkers())
+                        @test out == res_vcat
+
+                        r = 2:2 + nworkers()
+                        a1 = zeros(r, r)
+                        for ind in 1:nworkers()
+                            r = (1:2) .+ ind
+                            a1[r , r] .+= 1
+                        end
+
+                        a12 = pmapreduce(x->(r = ParallelUtilities.workerrank(x) .+ (1:2); ones(r,r)),
+                            x->ParallelUtilities.sumcat_aligned(x..., dims=(1,2)), 1:nworkers())
+                        @test a12 == a1
+                    end
+                    @testset "sumhcat_aligned" begin
+                        res_vcat = zeros(Float64, 2, 1:nworkers() + 3)
+                        for ind in 1:nworkers()
+                            res_vcat[:, ind .+ (0:3)] .+= 1
+                        end
+                        out = pmapreduce(x->ones(2, ParallelUtilities.workerrank(x) .+ (0:3)), 
+                            x->ParallelUtilities.sumhcat_aligned(x...), 1:nworkers())
+                        @test out == res_vcat
+                    end
+                    @testset "sumvcat_aligned" begin
+                        res_vcat = zeros(Float64, 1:nworkers() + 3)
+                        for ind in 1:nworkers()
+                            res_vcat[ind .+ (0:3)] .+= 1
+                        end
+                        out = pmapreduce(x->ones(ParallelUtilities.workerrank(x) .+ (0:3)), 
+                            x->ParallelUtilities.sumvcat_aligned(x...), 1:nworkers())
+                        @test out == res_vcat
+                    end
                 end
 		    end;
 

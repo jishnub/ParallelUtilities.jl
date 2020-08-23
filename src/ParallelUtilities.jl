@@ -2,6 +2,7 @@ module ParallelUtilities
 using ProgressMeter
 using DataStructures
 using Reexport
+using OffsetArrays
 @reexport using Distributed
 
 export  ProductSplit,
@@ -28,5 +29,6 @@ include("productsplit.jl")
 include("utils.jl")
 include("trees.jl")
 include("mapreduce.jl")
+include("reductionfunctions.jl")
 
 end # module
