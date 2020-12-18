@@ -1,11 +1,11 @@
 # ParallelUtilities.jl
 
-[![Build Status](https://travis-ci.com/jishnub/ParallelUtilities.jl.svg?branch=master)](https://travis-ci.com/jishnub/ParallelUtilities.jl)
+[![Build status](https://github.com/jishnub/ParallelUtilities.jl/workflows/CI/badge.svg)](https://github.com/jishnub/ParallelUtilities.jl/actions)
 [![codecov](https://codecov.io/gh/jishnub/ParallelUtilities.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/jishnub/ParallelUtilities.jl)
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://jishnub.github.io/ParallelUtilities.jl/stable)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://jishnub.github.io/ParallelUtilities.jl/dev)
 
-Parallel mapreduce and other helpful functions for HPC, meant primarily for embarassingly parallel operations that often require one to split up a list of tasks into subsections that can be processed on individual cores.
+Parallel mapreduce and other helpful functions for HPC, meant primarily for embarassingly parallel operations that often require one to split up a list of tasks into subsections that may be processed on individual cores.
 
 # Installation
 
