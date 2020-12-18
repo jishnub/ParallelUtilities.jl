@@ -59,8 +59,10 @@ jobs:
             Pkg.instantiate()'
       - run: |
           julia --project=docs -e '
-            using Documenter: doctest
+            using Documenter
+            import Documenter: doctest
             using ParallelUtilities
+            DocMeta.setdocmeta!(ParallelUtilities, :DocTestSetup, :(using ParallelUtilities); recursive=true)
             doctest(ParallelUtilities)'
       - run: julia --project=docs docs/make.jl
         env:
