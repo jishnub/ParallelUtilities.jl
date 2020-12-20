@@ -2192,16 +2192,16 @@ end
                     @test res == res_exp
                 end
                 @testset "with progress" begin
-                    res = pmapsum(x->x[1][1],Int,1:nworkers(),showprogress=true)
+                    res = @test_deprecated pmapsum(x->x[1][1],Int,1:nworkers(), showprogress=true)
                     @test res == res_exp
-                    res = pmapsum(x->x[1][1],1:nworkers(),showprogress=true)
+                    res = @test_deprecated pmapsum(x->x[1][1],1:nworkers(), showprogress=true)
                     @test res == res_exp
                 end
-			    @test pmapsum(x->x[1][1],Int,(1:nworkers(),)) == res_exp
-                @test pmapsum(x->x[1][1],(1:nworkers(),)) == res_exp
-                @test pmapsum(x->x[1][1],Int,(1:nworkers(),1:1)) == res_exp
-			    @test pmapsum(x->x[1][1],(1:nworkers(),1:1)) == res_exp
-			    @test pmapsum(x->myid(),1:nworkers()) == sum(workers())
+			    @test pmapsum(x->x[1][1], Int, (1:nworkers(),)) == res_exp
+                @test pmapsum(x->x[1][1], (1:nworkers(),)) == res_exp
+                @test pmapsum(x->x[1][1], Int, (1:nworkers(), 1:1)) == res_exp
+			    @test pmapsum(x->x[1][1], (1:nworkers(), 1:1)) == res_exp
+			    @test pmapsum(x->myid(), 1:nworkers()) == sum(workers())
 		    end
 		    
 		    @testset "one iterator" begin
@@ -2263,7 +2263,7 @@ end
                     @test res == sum(iterable)
                 end
                 @testset "with progress" begin
-                    res = pmapsum_elementwise(identity,iterable,showprogress=true)
+                    res = @test_deprecated pmapsum_elementwise(identity,iterable, showprogress=true)
                     @test res == sum(iterable) 
                 end
                 res = pmapsum_elementwise(identity,(iterable,))
@@ -2327,9 +2327,9 @@ end
                     @test res == res_exp
                 end
                 @testset "with progress" begin
-                    res = pmapreduce_commutative(x->myid(),Int,sum,Int,1:nworkers(),showprogress=true)
+                    res = @test_deprecated pmapreduce_commutative(x->myid(),Int,sum,Int,1:nworkers(), showprogress=true)
     			    @test res == res_exp
-                    res = pmapreduce_commutative(x->myid(),sum,1:nworkers(),showprogress=true)
+                    res = @test_deprecated  pmapreduce_commutative(x->myid(),sum,1:nworkers(), showprogress=true)
                     @test res == res_exp
                 end
                 @test pmapreduce_commutative(x->myid(),Int,sum,Int,(1:nworkers(),)) == res_exp
@@ -2402,7 +2402,7 @@ end
                     @test res == res_exp
                 end
                 @testset "with progress" begin
-    			    res = pmapreduce_commutative_elementwise(x->x^2,sum,iter,showprogress=true)
+    			    res = @test_deprecated pmapreduce_commutative_elementwise(x->x^2,sum,iter, showprogress=true)
     			    @test res == res_exp
                 end
 			    @test res == pmapsum_elementwise(x->x^2,iter)
@@ -2464,9 +2464,9 @@ end
                     @test pmapreduce(x->myid(),sum,1:nworkers()) == res_exp
                 end
                 @testset "without progress" begin
-                    res = pmapreduce(x->myid(),Int,sum,Int,1:nworkers(),showprogress=true)
+                    res = @test_deprecated pmapreduce(x->myid(),Int,sum,Int,1:nworkers(), showprogress=true)
                     @test res == res_exp
-                    res = pmapreduce(x->myid(),sum,1:nworkers(),showprogress=true)
+                    res = @test_deprecated pmapreduce(x->myid(),sum,1:nworkers(), showprogress=true)
                     @test res == res_exp
                 end
 			    @test pmapreduce(x->myid(),Int,sum,Int,(1:nworkers(),)) == res_exp

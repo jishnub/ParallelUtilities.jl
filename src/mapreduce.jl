@@ -220,8 +220,17 @@ end
 
 function pmapreduceworkers(fmap::Function, freduce::Function, iterators::Tuple,
     tree, branches, ord::Ordering, args...;
-    showprogress::Bool = false, progressdesc = "Progress in pmapreduce : ",
     kwargs...)
+
+    kwargs_ = Dict(kwargs)
+    if haskey(kwargs, :showprogress)
+        Base.depwarn("showprogress is deprecated and will be removed in a future release", :pmapreduceworkers)
+    end
+
+    showprogress = get(kwargs, :showprogress, false)
+    progressdesc = get(kwargs, :progressdesc, "Progress in pmapreduce : ")
+    delete!(kwargs_, :showprogress)
+    delete!(kwargs_, :progressdesc)
 
     num_workers_active = nworkersactive(iterators)
     Nmaptotal = num_workers_active
@@ -244,7 +253,7 @@ function pmapreduceworkers(fmap::Function, freduce::Function, iterators::Tuple,
 
                 @spawnat p mapTreeNode(fmap, iterable_on_proc, rank, mypipe,
                     showprogress ? progresschannel : nothing,
-                    args...;kwargs...)
+                    args...; kwargs_...)
 
                 @spawnat p reduceTreeNode(freduce, SubTreeNode(rank),
                     mypipe, ord, showprogress ? progresschannel : nothing)
