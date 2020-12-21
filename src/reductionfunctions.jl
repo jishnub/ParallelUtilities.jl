@@ -29,11 +29,11 @@ function checkdims(A, d::Integer)
 end
 
 """
-	ParallelUtilities.sumcat_aligned(A::AbstractArray{T,N}...; dims) where {T,N}
+	sumcat_aligned(A::AbstractArray{T,N}...; dims) where {T,N}
 
 Concatenate the arrays along the dimensions `dims` according to their axes, 
 with overlapping sections being summed over. Returns an `OffsetArray` with the minimal 
-axes span encompassing all the arrays.
+axis span encompassing all the arrays.
 
 `dims` may be an `Integer` or a collection of `Integer`s, but all elements of `dims` must be from the range `1:N`.
 
@@ -90,11 +90,11 @@ end
 sumcat_aligned(A1::AbstractArray; dims) = (all(x -> 1 <= x <= ndims(A1), dims) || throw_dimserror(dims); A1)
 
 """
-	ParallelUtilities.sumvcat_aligned(A::AbstractArray{T,N}...) where {T,N}
+	sumvcat_aligned(A::AbstractArray{T,N}...) where {T,N}
 
 Concatenate the arrays along the first dimension according to their axes, 
 with overlapping sections being summed over. Returns an `OffsetArray` with the minimal 
-axes span encompassing all the arrays.
+axis span encompassing all the arrays.
 
 The input arrays must be at least one-dimensional.
 
@@ -147,11 +147,11 @@ function sumvcat_aligned(A::AbstractArray)
 end
 
 """
-	ParallelUtilities.sumhcat_aligned(A::AbstractArray{T,N}...) where {T,N}
+	sumhcat_aligned(A::AbstractArray{T,N}...) where {T,N}
 
 Concatenate the arrays along the second dimension according to their axes, 
 with overlapping sections being summed over. Returns an `OffsetArray` with the minimal 
-axes span encompassing all the arrays. 
+axis span encompassing all the arrays. 
 
 The input arrays must be at least two-dimensional.
 

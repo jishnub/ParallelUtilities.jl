@@ -13,6 +13,8 @@
     nelements
 end
 
+const future_release_warn = r"will not be exported in a future release"i
+
 @test isempty(Test.detect_ambiguities(Base, Core, ParallelUtilities))
 
 macro testsetwithinfo(str,ex)
@@ -57,14 +59,14 @@ end
         @testset "Constructor" begin
 
     	    function checkPSconstructor(iters,npmax=10)
-    	    	ntasks_total = prod(length.(iters))
+    	    	ntasks_total = prod(length, iters)
     			for np = 1:npmax, p = 1:np
     		        ps = ProductSplit(iters, np, p)
                     @test eltype(ps) == Tuple{eltype.(iters)...}
                     @test ndims(ps) == length(iters)
     		        @test collect(ps) == collect(split_product_across_processors_iterators(iters,np,p))
-    		        @test ntasks(ps) == ntasks_total
-    		        @test ntasks(ps.iterators) == ntasks_total
+    		        @test (@test_deprecated ntasks(ps)) == ntasks_total
+    		        @test prod(length, ps.iterators) == ntasks_total
                     @test ParallelUtilities.workerrank(ps) == p
     		    end
 
@@ -118,21 +120,21 @@ end
     	    	    ps = ProductSplit(iters,2,1)
     	    	    @test firstindex(ps) == 1
     	    	    @test ps.firstind == 1
-    	    	    @test ps.lastind == div(ntasks(iters),2)
-    	    	    @test lastindex(ps) == div(ntasks(iters),2)
+    	    	    @test ps.lastind == div(prod(length, iters),2)
+    	    	    @test lastindex(ps) == div(prod(length, iters),2)
     	    	    @test lastindex(ps) == length(ps)
     	    	    ps = ProductSplit(iters,2,2)
-    	    	    @test ps.firstind == div(ntasks(iters),2) + 1
+    	    	    @test ps.firstind == div(prod(length, iters),2) + 1
     	    	    @test firstindex(ps) == 1
-    	    	    @test ps.lastind == ntasks(iters)
+    	    	    @test ps.lastind == prod(length, iters)
     	    	    @test lastindex(ps) == length(ps)
 
-    	    	    for np in ntasks(iters)+1:ntasks(iters)+10,
-    	    	    	p in ntasks(iters)+1:np
+    	    	    for np in prod(length, iters)+1:prod(length, iters)+10,
+    	    	    	p in prod(length, iters)+1:np
 
     		    	    ps = ProductSplit(iters,np,p)
-    		    	    @test ps.firstind == ntasks(iters) + 1
-    		    	    @test ps.lastind == ntasks(iters)
+    		    	    @test ps.firstind == prod(length, iters) + 1
+    		    	    @test ps.lastind == prod(length, iters)
     		    	end
     		    end
         	end
@@ -160,21 +162,21 @@ end
 
             	@test ParallelUtilities._first(()) == ()
 
-                for iters in various_iters,np=1:5ntasks(iters)
+                for iters in various_iters,np=1:5prod(length, iters)
 
     	            ps = ProductSplit(iters,np,1)
     	            @test first(ps) == ( isempty(ps) ? nothing : map(first,iters) )
     	        end
 
     	        iters = (1:1,)
-    	        ps = ProductSplit(iters,2ntasks(iters),ntasks(iters)+1) # must be empty
+    	        ps = ProductSplit(iters,2prod(length, iters),prod(length, iters)+1) # must be empty
     	        @test first(ps) === nothing
             end
             @testset "last" begin
 
             	@test ParallelUtilities._last(()) == ()
 
-                for iters in various_iters,np=1:5ntasks(iters)
+                for iters in various_iters,np=1:5prod(length, iters)
 
     	            ps = ProductSplit(iters,np,np)
     	            @test last(ps) == ( isempty(ps) ? nothing : map(last,iters) )
@@ -196,6 +198,7 @@ end
     			        for dim in 1:length(iters)
     			        	@test begin
     			        		res = fn(ps,dim=dim) == fn(x[dim] for x in pcol)
+                                @test (@test_deprecated fn(ps, dim)) == fn(ps, dim=dim)
     			        		if !res
     			        			println(summary(ps))
     			        		end
@@ -224,13 +227,13 @@ end
         		for iters in various_iters
 
         			dims = length(iters)
-    	    		for np = 1:5ntasks(iters), proc_id = 1:np
+    	    		for np = 1:5prod(length, iters), proc_id = 1:np
     	    	    	ps = ProductSplit(iters,np,proc_id)
     	    	    	if isempty(ps)
-    	    	    		@test extremadims(ps) == Tuple(nothing for i=1:dims)
+    	    	    		@test (@test_deprecated future_release_warn extremadims(ps)) == Tuple(nothing for i=1:dims)
     	    	    	else
     		    	    	ext = Tuple(map(extrema,zip(collect(ps)...)))
-    		    	    	@test extremadims(ps) == ext
+    		    	    	@test (@test_deprecated future_release_warn extremadims(ps)) == ext
     		    	    end
     	    	    end
     	    	end
@@ -239,9 +242,9 @@ end
         	@testset "extrema_commonlastdim" begin
         	    iters = (1:10,4:6,1:4)
         	    ps = ProductSplit(iters,37,8)
-        	    @test extrema_commonlastdim(ps) == ([(9,1),(6,1)],[(2,2),(4,2)])
-        	    ps = ProductSplit(iters,ntasks(iters)+1,ntasks(iters)+1)
-        	    @test extrema_commonlastdim(ps) === nothing
+        	    @test (@test_deprecated future_release_warn extrema_commonlastdim(ps)) == ([(9,1),(6,1)],[(2,2),(4,2)])
+        	    ps = ProductSplit(iters,prod(length, iters)+1,prod(length, iters)+1)
+        	    @test (@test_deprecated future_release_warn extrema_commonlastdim(ps)) === nothing
         	end
         end
 
@@ -278,35 +281,35 @@ end
             ps = ProductSplit(iters,np,proc_id)
             @test whichproc(iters,first(ps),1) == 1
             @test whichproc(iters,(100,100,100),1) === nothing
-            @test procrange_recast(iters,ps,1) == 1:1
-            @test procrange_recast(ps,1) == 1:1
+            @test (@test_deprecated future_release_warn procrange_recast(iters,ps,1)) == 1:1
+            @test (@test_deprecated future_release_warn procrange_recast(ps,1)) == 1:1
 
             smalleriter = (1:1,1:1,1:1)
             err = ParallelUtilities.TaskNotPresentError(smalleriter,first(ps))
-            @test_throws err procrange_recast(smalleriter,ps,1)
+            @test_deprecated future_release_warn @test_throws err procrange_recast(smalleriter,ps,1)
             smalleriter = (7:9,4:6,1:4)
             err = ParallelUtilities.TaskNotPresentError(smalleriter,last(ps))
-            @test_throws err procrange_recast(smalleriter,ps,1)
+            @test_deprecated future_release_warn @test_throws err procrange_recast(smalleriter,ps,1)
 
             iters = (1:1,2:2)
             ps = ProductSplit(iters,np,proc_id)
             @test whichproc(iters,first(ps),np) === nothing
             @test whichproc(iters,nothing,np) === nothing
-            @test procrange_recast(iters,ps,2) == (0:-1)
-            @test procrange_recast(ps,2) == (0:-1)
+            @test (@test_deprecated future_release_warn procrange_recast(iters,ps,2)) == (0:-1)
+            @test (@test_deprecated future_release_warn procrange_recast(ps,2)) == (0:-1)
 
             iters = (1:1,2:2)
             ps = ProductSplit(iters,1,1)
-            @test procrange_recast(iters,ps,2) == 1:1
-            @test procrange_recast(ps,2) == 1:1
+            @test (@test_deprecated future_release_warn procrange_recast(iters,ps,2)) == 1:1
+            @test (@test_deprecated future_release_warn procrange_recast(ps,2)) == 1:1
 
             iters = (Base.OneTo(2),2:4)
             ps = ProductSplit(iters,2,1)
-            @test procrange_recast(iters,ps,1) == 1:1
-            @test procrange_recast(iters,ps,2) == 1:1
-            @test procrange_recast(iters,ps,ntasks(iters)) == 1:length(ps)
+            @test (@test_deprecated future_release_warn procrange_recast(iters,ps,1)) == 1:1
+            @test (@test_deprecated future_release_warn procrange_recast(iters,ps,2)) == 1:1
+            @test (@test_deprecated future_release_warn procrange_recast(iters,ps, prod(length, iters))) == 1:length(ps)
 
-            for np_new in 1:5ntasks(iters)
+            for np_new in 1:5prod(length, iters)
             	for proc_id_new=1:np_new
     	        	ps_new = ProductSplit(iters,np_new,proc_id_new)
 
@@ -317,22 +320,22 @@ end
     	        end
     	        procid_new_first = whichproc(iters,first(ps),np_new)
     	        proc_new_last = whichproc(iters,last(ps),np_new)
-            	@test procrange_recast(iters,ps,np_new) == (isempty(ps) ? (0:-1) : (procid_new_first:proc_new_last))
-            	@test procrange_recast(ps,np_new) == (isempty(ps) ? (0:-1) : (procid_new_first:proc_new_last))
+            	@test (@test_deprecated future_release_warn procrange_recast(iters,ps,np_new)) == (isempty(ps) ? (0:-1) : (procid_new_first:proc_new_last))
+            	@test (@test_deprecated future_release_warn procrange_recast(ps,np_new)) == (isempty(ps) ? (0:-1) : (procid_new_first:proc_new_last))
             end
 
             @testset "different set" begin
     	        iters = (1:100,1:4000)
     	        ps = ProductSplit((20:30,1:1),2,1)
-    	        @test procrange_recast(iters,ps,700) == 1:1
+    	        @test (@test_deprecated future_release_warn procrange_recast(iters,ps,700)) == 1:1
     	        ps = ProductSplit((20:30,1:1),2,2)
-    	        @test procrange_recast(iters,ps,700) == 1:1
+    	        @test (@test_deprecated future_release_warn procrange_recast(iters,ps,700)) == 1:1
 
     	        iters = (1:1,2:2)
     	        ps = ProductSplit((20:30,2:2),2,1)
-    	        @test_throws ParallelUtilities.TaskNotPresentError procrange_recast(iters,ps,3)
+    	        @test_deprecated future_release_warn @test_throws ParallelUtilities.TaskNotPresentError procrange_recast(iters,ps,3)
     	        ps = ProductSplit((1:30,2:2),2,1)
-    	        @test_throws ParallelUtilities.TaskNotPresentError procrange_recast(iters,ps,3)
+    	        @test_deprecated future_release_warn @test_throws ParallelUtilities.TaskNotPresentError procrange_recast(iters,ps,3)
             end
         end
 
@@ -345,7 +348,7 @@ end
         @testset "localindex" begin
             
             for iters in various_iters
-    	        for np=1:5ntasks(iters),proc_id=1:np
+    	        for np=1:5prod(length, iters),proc_id=1:np
     	        	ps = ProductSplit(iters,np,proc_id)
     	        	for (ind,val) in enumerate(ps)
     	        		@test localindex(ps,val) == ind
@@ -360,7 +363,7 @@ end
 
         @testset "whichproc_localindex" begin
             for iters in various_iters
-    	        for np=1:ntasks(iters),proc_id=1:np
+    	        for np=1:prod(length, iters),proc_id=1:np
     	        	ps_col = collect(ProductSplit(iters,np,proc_id))
     	        	ps_col_rev = [reverse(t) for t in ps_col] 
     	        	for val in ps_col
@@ -381,7 +384,7 @@ end
         	@test ParallelUtilities.childindex((),1) == (1,)
 
             for iters in various_iters
-                for np=1:ntasks(iters),p=1:np
+                for np=1:prod(length, iters),p=1:np
                 	ps = ProductSplit(iters,np,p)
                 	ps_col = collect(ps)
                 	for i in 1:length(ps)
@@ -430,31 +433,32 @@ end
     end
     @testset "nelements" begin
         ps = ProductSplit((1:5,2:4,1:3),7,3);
-        @test nelements(ps,dim=1) == 5
-        @test nelements(ps,dim=2) == 3
-        @test nelements(ps,dim=3) == 2
-        @test_throws ArgumentError nelements(ps,dim=0)
-        @test_throws ArgumentError nelements(ps,dim=4)
+        @test nelements(ps, dim = 1) == 5
+        @test nelements(ps, dim = 2) == 3
+        @test nelements(ps, dim = 3) == 2
+        @test_throws ArgumentError nelements(ps, dim = 0)
+        @test_throws ArgumentError nelements(ps, dim = 4)
 
         ps = ProductSection((1:5,2:4,1:3),5:8);
-        @test nelements(ps,1) == 4
-        @test nelements(ps,2) == 2
-        @test nelements(ps,3) == 1
+        @test (@test_deprecated nelements(ps,1)) == nelements(ps, dim = 1)
+        @test nelements(ps, dim =1) == 4
+        @test nelements(ps, dim =2) == 2
+        @test nelements(ps, dim =3) == 1
 
         ps = ProductSection((1:5,2:4,1:3),5:11);
-        @test nelements(ps,1) == 5
-        @test nelements(ps,2) == 3
-        @test nelements(ps,3) == 1
+        @test nelements(ps, dim = 1) == 5
+        @test nelements(ps, dim = 2) == 3
+        @test nelements(ps, dim = 3) == 1
 
         ps = ProductSection((1:5,2:4,1:3),4:8);
-        @test nelements(ps,1) == 5
-        @test nelements(ps,2) == 2
-        @test nelements(ps,3) == 1
+        @test nelements(ps, dim = 1) == 5
+        @test nelements(ps, dim = 2) == 2
+        @test nelements(ps, dim = 3) == 1
 
         ps = ProductSection((1:5,2:4,1:3),4:9);
-        @test nelements(ps,1) == 5
-        @test nelements(ps,2) == 2
-        @test nelements(ps,3) == 1
+        @test nelements(ps, dim = 1) == 5
+        @test nelements(ps, dim = 2) == 2
+        @test nelements(ps, dim = 3) == 1
     end
     
     @test ParallelUtilities._checknorollover((),(),())
@@ -517,27 +521,28 @@ end;
     end
 
     @testset "hostnames" begin
-    	hostnames = gethostnames()
-    	nodes = unique(hostnames)
-        @test hostnames == [@fetchfrom p Libc.gethostname() for p in workers()]
-        @test nodenames() == nodes
-        @test nodenames(hostnames) == nodes
-        np1 = nprocs_node(hostnames,nodes)
-        np2 = nprocs_node(hostnames)
-        np3 = nprocs_node()
+        @test (@test_deprecated gethostnames()) == hostnames()
+    	hosts = hostnames()
+    	nodes = unique(hosts)
+        @test hosts == [@fetchfrom p Libc.gethostname() for p in workers()]
+        @test (@test_deprecated future_release_warn nodenames()) == nodes
+        @test (@test_deprecated future_release_warn nodenames(hosts)) == nodes
+        np1 = @test_deprecated future_release_warn nprocs_node(hosts,nodes)
+        np2 = @test_deprecated future_release_warn nprocs_node(hosts)
+        np3 = @test_deprecated future_release_warn nprocs_node()
         @test np1 == np2 == np3
         for node in nodes
-            npnode = count(isequal(node),hostnames)
+            npnode = count(isequal(node),hosts)
             @test np1[node] == npnode
         end
-        p1 = procs_node()
-        p2 = procs_node(workers(),hostnames,nodes)
+        p1 = @test_deprecated future_release_warn procs_node()
+        p2 = @test_deprecated future_release_warn procs_node(workers(), hosts, nodes)
         @test p1 == p2
         for node in nodes
-            pnode = workers()[findall(isequal(node),hostnames)]
+            pnode = workers()[findall(isequal(node),hosts)]
             @test p1[node] == pnode
         end
-        np4 = nprocs_node(p1)
+        np4 = @test_deprecated future_release_warn nprocs_node(p1)
         @test np1 == np4
     end
 end;
@@ -2188,16 +2193,16 @@ end
                     @test res == res_exp
                 end
                 @testset "with progress" begin
-                    res = pmapsum(x->x[1][1],Int,1:nworkers(),showprogress=true)
+                    res = @test_deprecated pmapsum(x->x[1][1],Int,1:nworkers(), showprogress=true)
                     @test res == res_exp
-                    res = pmapsum(x->x[1][1],1:nworkers(),showprogress=true)
+                    res = @test_deprecated pmapsum(x->x[1][1],1:nworkers(), showprogress=true)
                     @test res == res_exp
                 end
-			    @test pmapsum(x->x[1][1],Int,(1:nworkers(),)) == res_exp
-                @test pmapsum(x->x[1][1],(1:nworkers(),)) == res_exp
-                @test pmapsum(x->x[1][1],Int,(1:nworkers(),1:1)) == res_exp
-			    @test pmapsum(x->x[1][1],(1:nworkers(),1:1)) == res_exp
-			    @test pmapsum(x->myid(),1:nworkers()) == sum(workers())
+			    @test pmapsum(x->x[1][1], Int, (1:nworkers(),)) == res_exp
+                @test pmapsum(x->x[1][1], (1:nworkers(),)) == res_exp
+                @test pmapsum(x->x[1][1], Int, (1:nworkers(), 1:1)) == res_exp
+			    @test pmapsum(x->x[1][1], (1:nworkers(), 1:1)) == res_exp
+			    @test pmapsum(x->myid(), 1:nworkers()) == sum(workers())
 		    end
 		    
 		    @testset "one iterator" begin
@@ -2259,7 +2264,7 @@ end
                     @test res == sum(iterable)
                 end
                 @testset "with progress" begin
-                    res = pmapsum_elementwise(identity,iterable,showprogress=true)
+                    res = @test_deprecated pmapsum_elementwise(identity,iterable, showprogress=true)
                     @test res == sum(iterable) 
                 end
                 res = pmapsum_elementwise(identity,(iterable,))
@@ -2323,9 +2328,9 @@ end
                     @test res == res_exp
                 end
                 @testset "with progress" begin
-                    res = pmapreduce_commutative(x->myid(),Int,sum,Int,1:nworkers(),showprogress=true)
+                    res = @test_deprecated pmapreduce_commutative(x->myid(),Int,sum,Int,1:nworkers(), showprogress=true)
     			    @test res == res_exp
-                    res = pmapreduce_commutative(x->myid(),sum,1:nworkers(),showprogress=true)
+                    res = @test_deprecated  pmapreduce_commutative(x->myid(),sum,1:nworkers(), showprogress=true)
                     @test res == res_exp
                 end
                 @test pmapreduce_commutative(x->myid(),Int,sum,Int,(1:nworkers(),)) == res_exp
@@ -2398,7 +2403,7 @@ end
                     @test res == res_exp
                 end
                 @testset "with progress" begin
-    			    res = pmapreduce_commutative_elementwise(x->x^2,sum,iter,showprogress=true)
+    			    res = @test_deprecated pmapreduce_commutative_elementwise(x->x^2,sum,iter, showprogress=true)
     			    @test res == res_exp
                 end
 			    @test res == pmapsum_elementwise(x->x^2,iter)
@@ -2460,9 +2465,9 @@ end
                     @test pmapreduce(x->myid(),sum,1:nworkers()) == res_exp
                 end
                 @testset "without progress" begin
-                    res = pmapreduce(x->myid(),Int,sum,Int,1:nworkers(),showprogress=true)
+                    res = @test_deprecated pmapreduce(x->myid(),Int,sum,Int,1:nworkers(), showprogress=true)
                     @test res == res_exp
-                    res = pmapreduce(x->myid(),sum,1:nworkers(),showprogress=true)
+                    res = @test_deprecated pmapreduce(x->myid(),sum,1:nworkers(), showprogress=true)
                     @test res == res_exp
                 end
 			    @test pmapreduce(x->myid(),Int,sum,Int,(1:nworkers(),)) == res_exp
