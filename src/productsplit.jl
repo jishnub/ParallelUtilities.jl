@@ -205,7 +205,7 @@ Base.firstindex(ps::AbstractConstrainedProduct) = 1
 Base.lastindex(ps::AbstractConstrainedProduct) = ps.lastind - ps.firstind + 1
 
 """
-    ParallelUtilities.childindex(ps::AbstractConstrainedProduct, ind)
+    childindex(ps::AbstractConstrainedProduct, ind)
 
 Return a tuple containing the indices of the individual iterators 
 corresponding to the element that is present at index `ind` in the 
@@ -241,7 +241,7 @@ end
 childindex(::Tuple{}, ind) = (ind,)
 
 """
-    ParallelUtilities.childindexshifted(ps::AbstractConstrainedProduct, ind)
+    childindexshifted(ps::AbstractConstrainedProduct, ind)
 
 Return a tuple containing the indices in the individual iterators 
 given an index of a `AbstractConstrainedProduct`.
@@ -345,8 +345,7 @@ function _nrollovers(ps::AbstractConstrainedProduct, dim::Integer)
 end
 
 """
-    ParallelUtilities.nelements(ps::AbstractConstrainedProduct; dim::Integer)
-    ParallelUtilities.nelements(ps::AbstractConstrainedProduct, dim::Integer)
+    nelements(ps::AbstractConstrainedProduct; dim::Integer)
 
 Compute the number of unique values in the section of the `dim`-th range contained in `ps`.
 
@@ -364,18 +363,21 @@ julia> collect(ps)
  (5, 2, 2)
  (1, 3, 2)
 
-julia> ParallelUtilities.nelements(ps, 1)
+julia> ParallelUtilities.nelements(ps, dim = 1)
 5
 
-julia> ParallelUtilities.nelements(ps, 2)
+julia> ParallelUtilities.nelements(ps, dim = 2)
 3
 
-julia> ParallelUtilities.nelements(ps, 3)
+julia> ParallelUtilities.nelements(ps, dim = 3)
 2
 ```
 """
-nelements(ps::AbstractConstrainedProduct; dim::Integer) = nelements(ps,dim)
 function nelements(ps::AbstractConstrainedProduct, dim::Integer)
+    Base.depwarn("nelements(ps, dim) is deprecated, please use nelements(ps, dim = dim)", :nelements)
+    nelements(ps, dim = dim)
+end
+function nelements(ps::AbstractConstrainedProduct; dim::Integer)
     1 <= dim <= ndims(ps) || throw(ArgumentError("1 ⩽ dim ⩽ N=$(ndims(ps)) not satisfied for dim=$dim"))
 
     iter = ps.iterators[dim]
@@ -699,7 +701,7 @@ c2l_rec(i, n, ::Tuple{}, ::Tuple{}) = i
 _cartesiantolinear(ax, inds) = c2l_rec(1,1,ax,inds)
 
 """
-    ParallelUtilities.indexinproduct(iterators::NTuple{N,AbstractRange}, val::NTuple{N,Any}) where {N}
+    indexinproduct(iterators::NTuple{N,AbstractRange}, val::NTuple{N,Any}) where {N}
 
 Return the index of `val` in the outer product of `iterators`, 
 where `iterators` is a `Tuple` of increasing `AbstractRange`s. 
@@ -747,7 +749,7 @@ Base.isless(a::ReverseLexicographicTuple{T}, b::ReverseLexicographicTuple{T}) wh
 Base.isequal(a::ReverseLexicographicTuple{T}, b::ReverseLexicographicTuple{T}) where {T} = a.t == b.t
 
 """
-    whichproc(iterators::Tuple, val::Tuple, np::Integer )
+    whichproc(iterators::Tuple, val::Tuple, np::Integer)
 
 Return the processor rank that will contain `val` if the outer 
 product of the ranges contained in `iterators` is split evenly 
@@ -860,8 +862,7 @@ julia> iters = (1:10, 4:6, 1:4);
 
 julia> ps = ProductSplit(iters, 5, 2); # split across 5 processes initially
 
-# If `iters` were spread across 10 processes, the tasks in `ps` would be spread across 
-julia> procrange_recast(ps, 10)
+julia> procrange_recast(ps, 10) # If `iters` were spread across 10 processes
 3:4
 ```
 """
@@ -938,7 +939,7 @@ end
 #################################################################
 
 """
-    ParallelUtilities.dropleading(ps::AbstractConstrainedProduct)
+    dropleading(ps::AbstractConstrainedProduct)
 
 Return a `ProductSection` leaving out the first iterator contained in `ps`. 
 The range of values of the remaining iterators in the 

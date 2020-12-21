@@ -433,31 +433,32 @@ end
     end
     @testset "nelements" begin
         ps = ProductSplit((1:5,2:4,1:3),7,3);
-        @test nelements(ps,dim=1) == 5
-        @test nelements(ps,dim=2) == 3
-        @test nelements(ps,dim=3) == 2
-        @test_throws ArgumentError nelements(ps,dim=0)
-        @test_throws ArgumentError nelements(ps,dim=4)
+        @test nelements(ps, dim = 1) == 5
+        @test nelements(ps, dim = 2) == 3
+        @test nelements(ps, dim = 3) == 2
+        @test_throws ArgumentError nelements(ps, dim = 0)
+        @test_throws ArgumentError nelements(ps, dim = 4)
 
         ps = ProductSection((1:5,2:4,1:3),5:8);
-        @test nelements(ps,1) == 4
-        @test nelements(ps,2) == 2
-        @test nelements(ps,3) == 1
+        @test (@test_deprecated nelements(ps,1)) == nelements(ps, dim = 1)
+        @test nelements(ps, dim =1) == 4
+        @test nelements(ps, dim =2) == 2
+        @test nelements(ps, dim =3) == 1
 
         ps = ProductSection((1:5,2:4,1:3),5:11);
-        @test nelements(ps,1) == 5
-        @test nelements(ps,2) == 3
-        @test nelements(ps,3) == 1
+        @test nelements(ps, dim = 1) == 5
+        @test nelements(ps, dim = 2) == 3
+        @test nelements(ps, dim = 3) == 1
 
         ps = ProductSection((1:5,2:4,1:3),4:8);
-        @test nelements(ps,1) == 5
-        @test nelements(ps,2) == 2
-        @test nelements(ps,3) == 1
+        @test nelements(ps, dim = 1) == 5
+        @test nelements(ps, dim = 2) == 2
+        @test nelements(ps, dim = 3) == 1
 
         ps = ProductSection((1:5,2:4,1:3),4:9);
-        @test nelements(ps,1) == 5
-        @test nelements(ps,2) == 2
-        @test nelements(ps,3) == 1
+        @test nelements(ps, dim = 1) == 5
+        @test nelements(ps, dim = 2) == 2
+        @test nelements(ps, dim = 3) == 1
     end
     
     @test ParallelUtilities._checknorollover((),(),())
