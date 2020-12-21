@@ -25,17 +25,17 @@ julia> addprocs(2)
 
 julia> @everywhere using ParallelUtilities
 
-julia> pmapreduce(x -> ones(2).*myid(), x -> hcat(x...), 1:nworkers())
+julia> pmapreduce(x -> ones(2) .* myid(), x -> hcat(x...), 1:nworkers())
 2×2 Array{Float64,2}:
  2.0  3.0
  2.0  3.0
 
-julia> pmapreduce_commutative(x -> ones(2).*myid(), sum, 1:nworkers())
+julia> pmapreduce_commutative(x -> ones(2) .* myid(), sum, 1:nworkers())
 2-element Array{Float64,1}:
  5.0
  5.0
 
-julia> pmapsum(x -> ones(2).*myid(), 1:nworkers())
+julia> pmapsum(x -> ones(2) .* myid(), 1:nworkers())
 2-element Array{Float64,1}:
  5.0
  5.0

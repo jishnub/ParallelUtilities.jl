@@ -1,7 +1,7 @@
 """
-    ParallelUtilities.AbstractConstrainedProduct{T,N}
+    AbstractConstrainedProduct{T,N}
 
-Supertype of [`ParallelUtilities.ProductSplit`](@ref) and [`ParallelUtilities.ProductSection`](@ref).
+Supertype of [`ProductSplit`](@ref) and [`ProductSection`](@ref).
 """
 abstract type AbstractConstrainedProduct{T,N} end
 Base.eltype(::AbstractConstrainedProduct{T}) where {T} = T
@@ -183,9 +183,9 @@ function Base.first(ps::AbstractConstrainedProduct)
     isempty(ps) ? nothing : @inbounds _first(ps.iterators, childindex(ps, ps.firstind)...)
 end
 
-Base.@propagate_inbounds function _first(t::Tuple,ind::Integer,rest::Integer...)
+Base.@propagate_inbounds function _first(t::Tuple, ind::Integer, rest::Integer...)
     @boundscheck (1 <= ind <= length(first(t))) || throw(BoundsError(first(t),ind))
-    (@inbounds first(t)[ind], _first(Base.tail(t),rest...)...)
+    (@inbounds first(t)[ind], _first(Base.tail(t), rest...)...)
 end
 _first(::Tuple{}) = ()
 
@@ -871,7 +871,7 @@ function procrange_recast(ps::AbstractConstrainedProduct, np_new::Integer)
 end
 
 """
-    localindex(ps::ProductSplit{T}, val::T) where {T}
+    localindex(ps::AbstractConstrainedProduct{T}, val::T) where {T}
 
 Return the index of `val` in `ps`. Return `nothing` if the value
 is not found.
@@ -899,6 +899,7 @@ function localindex(ps::AbstractConstrainedProduct{T}, val::T) where {T}
     indflat - ps.firstind + 1
 end
 
+# this is only needed because first and last return nothing if the ProductSplit is empty
 localindex(::AbstractConstrainedProduct, ::Nothing) = nothing
 
 function localindex(iterators::Tuple, val::Tuple, np::Integer, p::Integer)
