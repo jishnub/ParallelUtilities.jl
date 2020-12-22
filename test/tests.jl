@@ -77,6 +77,13 @@ end
     		    @test_throws ArgumentError ProductSplit((),2,1)
     		end
 
+            @testset "cumprod" begin
+                @test ParallelUtilities._cumprod(1,()) == ()
+                @test ParallelUtilities._cumprod(1,(2,)) == (1,)
+                @test ParallelUtilities._cumprod(1,(2,3)) == (1,2)
+                @test ParallelUtilities._cumprod(1,(2,3,4)) == (1,2,6)
+            end
+
         	@testset "1D" begin
     	    	iters = (1:10,)
     	    	checkPSconstructor(iters)
@@ -139,14 +146,18 @@ end
                 @test ParallelUtilities.mwerepr(ps) == reprstr
 
                 summarystr = "$(length(ps))-element "*reprstr
-                @test contains(ParallelUtilities.summary(ps), summarystr)
+                @test occursin(summarystr, ParallelUtilities.summary(ps))
 
                 io = IOBuffer()
                 summary(io,ps)
-                @test contains(String(take!(io)), summarystr)
+                @test occursin(summarystr, String(take!(io)))
 
                 show(io, ps)
-                @test contains(String(take!(io)), summarystr)
+                @test occursin(summarystr, String(take!(io)))
+
+                ps = ParallelUtilities.ProductSection(iters,4:5)
+                reprstr = "ProductSection("*repr(iters)*", " * repr(4:5) * ")"
+                @test ParallelUtilities.mwerepr(ps) == reprstr
             end
         end
 
@@ -273,6 +284,8 @@ end
             iters = (1:10,4:6,1:4)
             ps = ProductSplit(iters,np,proc_id)
             @test whichproc(iters,first(ps),1) == 1
+            @test whichproc(ps,first(ps)) == proc_id
+            @test whichproc(ps,last(ps)) == proc_id
             @test whichproc(iters,(100,100,100),1) === nothing
             @test (@test_deprecated future_release_warn procrange_recast(iters,ps,1)) == 1:1
             @test (@test_deprecated future_release_warn procrange_recast(ps,1)) == 1:1

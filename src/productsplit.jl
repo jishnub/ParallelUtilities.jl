@@ -38,6 +38,15 @@ struct ProductSection{T,N,Q} <: AbstractConstrainedProduct{T,N}
     end
 end
 
+function _cumprod(len::Tuple)
+    (0,_cumprod(first(len),Base.tail(len))...)
+end
+
+_cumprod(::Integer,::Tuple{}) = ()
+function _cumprod(n::Integer, tl::Tuple)
+    (n,_cumprod(n*first(tl),Base.tail(tl))...)
+end
+
 """
     ProductSection(iterators::Tuple{Vararg{AbstractRange}}, inds::AbstractUnitRange)
 
@@ -71,7 +80,7 @@ function ProductSection(iterators::Tuple{AbstractRange,Vararg{AbstractRange}},
         ArgumentError("the range of indices must start from a number ≥ 1"))
     lastind <= Nel || throw(
         ArgumentError("the maximum index must be less than or equal to the total number of elements = $Nel"))
-    togglelevels = (0, Base.front(accumulate(*, len))...)
+    togglelevels = _cumprod(len)
     ProductSection(iterators, togglelevels, firstind, lastind)
 end
 ProductSection(::Tuple{}, ::AbstractUnitRange) = throw(ArgumentError("Need at least one iterator"))
@@ -595,7 +604,7 @@ map(i -> extrema(ps, dim = i), 1:ndims(ps))
 
 but it is implemented more efficiently. 
 
-Returns a `Tuple` containing the `(min, max)` pairs along each 
+Returns a `Tuple` containing the `(min,max)` pairs along each 
 dimension, such that the `i`-th index of the result contains the `extrema` along the section of the `i`-th range
 contained locally.
 
