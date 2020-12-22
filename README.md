@@ -284,8 +284,9 @@ julia> xrange_long,yrange_long,zrange_long = 1:3000,1:3000,1:3000
 
 julia> params_long = (xrange_long,yrange_long,zrange_long);
 
-julia> ps_long = ProductSplit(params_long, 10, 4)
-ProductSplit{Tuple{Int64,Int64,Int64},3,UnitRange{Int64}}((1:3000, 1:3000, 1:3000), (0, 3000, 9000000), 10, 4, 8100000001, 10800000000)
+julia> ps = ProductSplit(params_long, 10, 3)
+2700000000-element ProductSplit((1:3000, 1:3000, 1:3000), 10, 3)
+[(1, 1, 601), ... , (3000, 3000, 900)]
 
 # Evaluate length using random ranges to avoid compiler optimizations
 julia> @btime length(p) setup = (n = rand(3000:4000); p = ProductSplit((1:n,1:n,1:n), 200, 2));
@@ -333,25 +334,24 @@ Another useful function is `whichproc` that returns the rank of the processor a 
 julia> whichproc(params_long, val, 10)
 4
 
-julia> @btime whichproc($params_long, $val, 10)
-  1.264 μs (14 allocations: 448 bytes)
-4
+julia> @btime whichproc($params_long, $val, 10);
+  353.706 ns (0 allocations: 0 bytes)
 ```
 
 ### Extrema
 
-We can compute the ranges of each variable on any processor in `O(1)` time. 
+We may compute the ranges of each variable on any processor in `O(1)` time. 
 
 ```julia
-julia> extrema(ps, dim=2) # extrema of the second parameter on this processor
+julia> extrema(ps, dim = 2) # extrema of the second parameter on this processor
 (3, 4)
 
-julia> Tuple(extrema(ps, dim=i) for i in 1:3)
+julia> Tuple(extrema(ps, dim = i) for i in 1:3)
 ((1, 3), (3, 4), (4, 4))
 
 # Minimum and maximum work similarly
 
-julia> (minimum(ps, dim=2), maximum(ps, dim=2))
+julia> (minimum(ps, dim = 2), maximum(ps, dim = 2))
 (3, 4)
 
 julia> @btime extrema($ps_long, dim=2)

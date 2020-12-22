@@ -10,7 +10,7 @@
     maybepvalput!, createbranchchannels, nworkersactive, workersactive,
     procs_node, leafrankfoldedtree,
     TopTreeNode, SubTreeNode, ProductSection, indexinproduct, dropleading,
-    nelements
+    nelements, getiterators, firstindexglobal, lastindexglobal
 end
 
 const future_release_warn = r"will not be exported in a future release"i
@@ -66,23 +66,23 @@ end
                     @test ndims(ps) == length(iters)
     		        @test collect(ps) == collect(split_product_across_processors_iterators(iters,np,p))
     		        @test (@test_deprecated ntasks(ps)) == ntasks_total
-    		        @test prod(length, ps.iterators) == ntasks_total
+    		        @test prod(length, getiterators(ps)) == ntasks_total
                     @test ParallelUtilities.workerrank(ps) == p
     		    end
 
-    		    @test_throws ParallelUtilities.ProcessorNumberError ProductSplit(iters,npmax,npmax+1)
+    		    @test_throws ArgumentError ProductSplit(iters, npmax, npmax+1)
     		end
 
     		@testset "0D" begin
     		    @test_throws ArgumentError ProductSplit((),2,1)
     		end
 
-    		@testset "cumprod" begin
-    		    @test ParallelUtilities._cumprod(1,()) == ()
-    		    @test ParallelUtilities._cumprod(1,(2,)) == (1,)
-    		    @test ParallelUtilities._cumprod(1,(2,3)) == (1,2)
-    		    @test ParallelUtilities._cumprod(1,(2,3,4)) == (1,2,6)
-    		end
+            @testset "cumprod" begin
+                @test ParallelUtilities._cumprod(1,()) == ()
+                @test ParallelUtilities._cumprod(1,(2,)) == (1,)
+                @test ParallelUtilities._cumprod(1,(2,3)) == (1,2)
+                @test ParallelUtilities._cumprod(1,(2,3,4)) == (1,2,6)
+            end
 
         	@testset "1D" begin
     	    	iters = (1:10,)
@@ -119,22 +119,22 @@ end
         	    for iters in [(1:10,),(1:2,Base.OneTo(4),1:3:10)]
     	    	    ps = ProductSplit(iters,2,1)
     	    	    @test firstindex(ps) == 1
-    	    	    @test ps.firstind == 1
-    	    	    @test ps.lastind == div(prod(length, iters),2)
+    	    	    @test firstindexglobal(ps) == 1
+    	    	    @test lastindexglobal(ps) == div(prod(length, iters),2)
     	    	    @test lastindex(ps) == div(prod(length, iters),2)
     	    	    @test lastindex(ps) == length(ps)
     	    	    ps = ProductSplit(iters,2,2)
-    	    	    @test ps.firstind == div(prod(length, iters),2) + 1
+    	    	    @test firstindexglobal(ps) == div(prod(length, iters),2) + 1
     	    	    @test firstindex(ps) == 1
-    	    	    @test ps.lastind == prod(length, iters)
+    	    	    @test lastindexglobal(ps) == prod(length, iters)
     	    	    @test lastindex(ps) == length(ps)
 
     	    	    for np in prod(length, iters)+1:prod(length, iters)+10,
     	    	    	p in prod(length, iters)+1:np
 
     		    	    ps = ProductSplit(iters,np,p)
-    		    	    @test ps.firstind == prod(length, iters) + 1
-    		    	    @test ps.lastind == prod(length, iters)
+    		    	    @test firstindexglobal(ps) == prod(length, iters) + 1
+    		    	    @test lastindexglobal(ps) == prod(length, iters)
     		    	end
     		    end
         	end
@@ -146,14 +146,18 @@ end
                 @test ParallelUtilities.mwerepr(ps) == reprstr
 
                 summarystr = "$(length(ps))-element "*reprstr
-                @test ParallelUtilities.summary(ps) == summarystr
+                @test occursin(summarystr, ParallelUtilities.summary(ps))
 
                 io = IOBuffer()
                 summary(io,ps)
-                @test String(take!(io)) == summarystr
+                @test occursin(summarystr, String(take!(io)))
 
                 show(io, ps)
-                @test String(take!(io)) == reprstr
+                @test occursin(summarystr, String(take!(io)))
+
+                ps = ParallelUtilities.ProductSection(iters,4:5)
+                reprstr = "ProductSection("*repr(iters)*", " * repr(4:5) * ")"
+                @test ParallelUtilities.mwerepr(ps) == reprstr
             end
         end
 
@@ -280,6 +284,8 @@ end
             iters = (1:10,4:6,1:4)
             ps = ProductSplit(iters,np,proc_id)
             @test whichproc(iters,first(ps),1) == 1
+            @test whichproc(ps,first(ps)) == proc_id
+            @test whichproc(ps,last(ps)) == proc_id
             @test whichproc(iters,(100,100,100),1) === nothing
             @test (@test_deprecated future_release_warn procrange_recast(iters,ps,1)) == 1:1
             @test (@test_deprecated future_release_warn procrange_recast(ps,1)) == 1:1
@@ -417,7 +423,6 @@ end
             end
 
             @test_throws ArgumentError ProductSection((),2:3)
-            @test_throws ArgumentError ProductSection((1:3,),1:0)
         end
     end
     @testset "dropleading" begin
@@ -2626,14 +2631,6 @@ end;
     @testset "error" begin
         io = IOBuffer()
         
-        showerror(io,ParallelUtilities.ProcessorNumberError(5,2))
-        strexp = "processor id 5 does not lie in the range 1:2"
-        @test String(take!(io)) == strexp
-
-        showerror(io,ParallelUtilities.DecreasingIteratorError())
-        strexp = "all the iterators need to be strictly increasing"
-        @test String(take!(io)) == strexp
-
         showerror(io,ParallelUtilities.TaskNotPresentError((1:4,),(5,)))
         strexp = "could not find the task $((5,)) in the list $((1:4,))"
         @test String(take!(io)) == strexp
