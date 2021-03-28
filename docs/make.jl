@@ -14,7 +14,10 @@ makedocs(;
         assets=String[],
     ),
     pages=[
-        "API" => "index.md",
+        "ParallelUtilities" => "index.md",
+        "Mapreduce" => "pmapreduce.md",
+        "ClusterQueryUtils" => "clusterquery.md",
+        "Reference" => "api.md",
     ],
 )
 

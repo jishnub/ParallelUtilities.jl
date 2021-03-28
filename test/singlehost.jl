@@ -1,8 +1,16 @@
 using Distributed
 
-const workersused = 8
-addprocs(workersused)
+include("misctests_singleprocess.jl")
+include("productsplit.jl")
+include("paralleltests.jl")
 
-include("tests.jl")
+for workersused in [1, 2, 4, 8]
+	addprocs(workersused)
 
-rmprocs(workers())
+	try
+		include("paralleltests.jl")
+	finally
+		rmprocs(workers())
+	end
+end
+
