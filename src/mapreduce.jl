@@ -118,7 +118,8 @@ _maybesort(op, vals) = sort!(vals, by = pv -> pv.rank)
 function reducechannel(op, c, N; reducekw...)
     vals = [take!(c) for i = 1:N]
     vals = _maybesort(op, vals)
-    reduce(op, [value(v) for v in vals]; reducekw...)
+    v = [value(v) for v in vals]
+    reduce(op, v; reducekw...)
 end
 
 seterrorflag(c, val) = put!(c, take!(c) | val)
@@ -232,9 +233,12 @@ end
 """
     pmapreduce(f, op, [pool::AbstractWorkerPool], iterators...; reducekw...)
 
-Evaluate a parallel mapreduce over the elements from `iterators`.
+Evaluate a parallel `mapreduce` over the elements from `iterators`.
+For multiple iterators, apply `f` elementwise.
 
 The keyword arguments `reducekw` are passed on to the reduction.
+
+See also: [`pmapreduce_productsplit`](@ref)
 """
 function pmapreduce(f, op, pool::AbstractWorkerPool, iterators...; reducekw...)
     N = length(zip(iterators...))
@@ -264,10 +268,11 @@ end
 
 Evaluate a parallel mapreduce over the outer product of elements from `iterators`.
 The product of `iterators` is split over the workers available, and each worker is assigned a section
-of the product. The function `f` should accept a single argument that represents a section of the
-iterator product.
+of the product. The function `f` should accept a single argument that is a collection of `Tuple`s.
 
 The keyword arguments `reducekw` are passed on to the reduction.
+
+See also: [`pmapreduce`](@ref)
 """
 pmapreduce_productsplit(f, op, pool::AbstractWorkerPool, iterators...; reducekw...) =
     pmapreduce(NoSplat(f), op, pool, Hold(product(iterators...)); reducekw...)
@@ -276,4 +281,39 @@ function pmapreduce_productsplit(f, op, iterators...; reducekw...)
     N = length(product(iterators...))
     pool = maybetrimmedworkerpool(workers(), N)
     pmapreduce_productsplit(f, op, pool, iterators...; reducekw...)
+end
+
+"""
+    pmapbatch(f, [pool::AbstractWorkerPool], iterators...)
+
+Carry out a `pmap` with the `iterators` divided evenly among the available workers.
+
+See also: [`pmapreduce`](@ref)
+"""
+function pmapbatch(f, pool::AbstractWorkerPool, iterators...)
+    pmapreduce((x...) -> [f(x...)], vcat, pool, iterators...)
+end
+
+function pmapbatch(f, iterators...)
+    N = length(zip(iterators...))
+    pool = maybetrimmedworkerpool(workers(), N)
+    pmapbatch(f, pool, iterators...)
+end
+
+"""
+    pmapbatch_productsplit(f, [pool::AbstractWorkerPool], iterators...)
+
+Carry out a `pmap` with the outer product of `iterators` divided evenly among the available workers.
+The function `f` must accept a collection of `Tuple`s.
+
+See also: [`pmapbatch`](@ref), [`pmapreduce_productsplit`](@ref)
+"""
+function pmapbatch_productsplit(f, pool::AbstractWorkerPool, iterators...)
+    pmapreduce_productsplit(x -> [f(x)], vcat, pool, iterators...)
+end
+
+function pmapbatch_productsplit(f, iterators...)
+    N = length(product(iterators...))
+    pool = maybetrimmedworkerpool(workers(), N)
+    pmapbatch_productsplit(f, pool, iterators...)
 end

@@ -4,6 +4,8 @@ using Distributed
 
 export pmapreduce
 export pmapreduce_productsplit
+export pmapbatch
+export pmapbatch_productsplit
 export workerrank
 
 include("productsplit.jl")

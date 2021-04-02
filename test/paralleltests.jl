@@ -593,4 +593,21 @@ end
             end
         end;
     end;
+    @testsetwithinfo "pmapbatch" begin
+        for (iterators, fmap) in Any[
+            ((1:1,), x -> 1),
+            ((1:10,), x -> 1),
+            ((1:5,), x -> ones(1) * x),
+            ((1:10, 1:10), (x,y) -> ones(3) * (x+y))]
+
+            res = pmapbatch(fmap, iterators...)
+            res_exp = pmap(fmap, iterators...)
+            @test res == res_exp
+        end
+
+        v = pmapbatch_productsplit(x -> sum(sum(i) for i in x) * ones(2), 1:1, 1:1)
+        @test v == [[2.0, 2.0]]
+        v = pmapbatch_productsplit(x -> ParallelUtilities.workerrank(x), 1:nworkers(), 1:nworkers())
+        @test v == [1:nworkers();]
+    end
 end;
