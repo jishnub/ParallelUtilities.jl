@@ -76,7 +76,7 @@ specified by `inds`.
 julia> p = ParallelUtilities.ProductSection((1:3, 4:6), 5:8);
 
 julia> collect(p)
-4-element Vector{Tuple{Int64, Int64}}:
+4-element $(Vector{Tuple{Int, Int}}):
  (2, 5)
  (3, 5)
  (1, 6)
@@ -143,12 +143,12 @@ the values on the `p`-th worker.
 # Examples
 ```jldoctest
 julia> ParallelUtilities.ProductSplit((1:2, 4:5), 2, 1) |> collect
-2-element Vector{Tuple{Int64, Int64}}:
+2-element $(Vector{Tuple{Int, Int}}):
  (1, 4)
  (2, 4)
 
 julia> ParallelUtilities.ProductSplit((1:2, 4:5), 2, 2) |> collect
-2-element Vector{Tuple{Int64, Int64}}:
+2-element $(Vector{Tuple{Int, Int}}):
  (1, 5)
  (2, 5)
 ```
@@ -369,7 +369,7 @@ The function is defined currently only for iterator products of `AbstractUnitRan
 julia> ps = ParallelUtilities.ProductSplit((1:5, 2:4, 1:3), 7, 3);
 
 julia> collect(ps)
-7-element Vector{Tuple{Int64, Int64, Int64}}:
+7-element $(Vector{Tuple{Int, Int, Int}}):
  (5, 4, 1)
  (1, 2, 2)
  (2, 2, 2)
@@ -427,7 +427,7 @@ Compute the maximum value of the section of the range number `dims` contained in
 julia> ps = ParallelUtilities.ProductSplit((1:2, 4:5), 2, 1);
 
 julia> collect(ps)
-2-element Vector{Tuple{Int64, Int64}}:
+2-element $(Vector{Tuple{Int, Int}}):
  (1, 4)
  (2, 4)
 
@@ -479,7 +479,7 @@ Compute the minimum value of the section of the range number `dims` contained in
 julia> ps = ParallelUtilities.ProductSplit((1:2, 4:5), 2, 1);
 
 julia> collect(ps)
-2-element Vector{Tuple{Int64, Int64}}:
+2-element $(Vector{Tuple{Int, Int}}):
  (1, 4)
  (2, 4)
 
@@ -531,7 +531,7 @@ Compute the `extrema` of the section of the range number `dims` contained in `ps
 julia> ps = ParallelUtilities.ProductSplit((1:2, 4:5), 2, 1);
 
 julia> collect(ps)
-2-element Vector{Tuple{Int64, Int64}}:
+2-element $(Vector{Tuple{Int, Int}}):
  (1, 4)
  (2, 4)
 
@@ -601,7 +601,7 @@ contained locally.
 julia> ps = ParallelUtilities.ProductSplit((1:2, 4:5), 2, 1);
 
 julia> collect(ps)
-2-element Vector{Tuple{Int64, Int64}}:
+2-element $(Vector{Tuple{Int, Int}}):
  (1, 4)
  (2, 4)
 
@@ -632,7 +632,7 @@ For two ranges this simply returns `([first(ps)], [last(ps)])`.
 julia> ps = ParallelUtilities.ProductSplit((1:3, 4:7, 2:7), 10, 2);
 
 julia> collect(ps)
-8-element Vector{Tuple{Int64, Int64, Int64}}:
+8-element $(Vector{Tuple{Int, Int, Int}}):
  (3, 6, 2)
  (1, 7, 2)
  (2, 7, 2)
@@ -643,7 +643,7 @@ julia> collect(ps)
  (1, 5, 3)
 
 julia> ParallelUtilities.extrema_commonlastdim(ps)
-([(1, 2), (6, 2)], [(3, 3), (5, 3)])
+$((Tuple{Int,Int}[(1, 2), (6, 2)], Tuple{Int,Int}[(3, 3), (5, 3)]))
 ```
 """
 function extrema_commonlastdim(ps::IncreasingAbstractConstrainedProduct)
@@ -746,7 +746,7 @@ julia> iters = (1:4, 2:3);
 julia> np = 2;
 
 julia> ParallelUtilities.ProductSplit(iters, np, 2) |> collect
-4-element Vector{Tuple{Int64, Int64}}:
+4-element $(Vector{Tuple{Int, Int}}):
  (1, 3)
  (2, 3)
  (3, 3)
@@ -863,7 +863,7 @@ is not found.
 julia> ps = ParallelUtilities.ProductSplit((1:3, 4:5:20), 3, 2);
 
 julia> collect(ps)
-4-element Vector{Tuple{Int64, Int64}}:
+4-element $(Vector{Tuple{Int, Int}}):
  (2, 9)
  (3, 9)
  (1, 14)
@@ -898,7 +898,7 @@ julia> ParallelUtilities.whichproc_localindex(iters, (2, 4), np)
 (4, 1)
 
 julia> ParallelUtilities.ProductSplit(iters, np, 4) |> collect
-3-element Vector{Tuple{Int64, Int64}}:
+3-element $(Vector{Tuple{Int, Int}}):
  (2, 4)
  (3, 4)
  (4, 4)
@@ -924,7 +924,7 @@ resulting `ProductSection` will be the same as in `ps`.
 julia> ps = ParallelUtilities.ProductSplit((1:5, 2:4, 1:3), 7, 3);
 
 julia> collect(ps)
-7-element Vector{Tuple{Int64, Int64, Int64}}:
+7-element $(Vector{Tuple{Int, Int, Int}}):
  (5, 4, 1)
  (1, 2, 2)
  (2, 2, 2)
@@ -934,7 +934,7 @@ julia> collect(ps)
  (1, 3, 2)
 
 julia> ParallelUtilities.dropleading(ps) |> collect
-3-element Vector{Tuple{Int64, Int64}}:
+3-element $(Vector{Tuple{Int, Int}}):
  (4, 1)
  (2, 2)
  (3, 2)

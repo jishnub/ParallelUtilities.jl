@@ -22,7 +22,7 @@ Construct a binary function that evaluates `f.(x, y)` given the arguments `x` an
 # Examples
 ```jldoctest
 julia> ParallelUtilities.BroadcastFunction(+)(ones(3), ones(3))
-3-element Vector{Float64}:
+3-element $(Vector{Float64}):
  2.0
  2.0
  2.0
@@ -54,13 +54,13 @@ julia> op = ParallelUtilities.broadcastinplace(+, Val(1));
 julia> x = ones(3); y = ones(3);
 
 julia> op(x, y)
-3-element Vector{Float64}:
+3-element $(Vector{Float64}):
  2.0
  2.0
  2.0
 
 julia> x # overwritten
-3-element Vector{Float64}:
+3-element $(Vector{Float64}):
  2.0
  2.0
  2.0
@@ -138,34 +138,34 @@ Along the other dimensions the result has the same axes as `x` and `y`.
 # Examples
 ```jldoctest
 julia> A = ones(2)*2
-2-element Vector{Float64}:
+2-element $(Vector{Float64}):
  2.0
  2.0
 
 julia> B = ones(3)*3
-3-element Vector{Float64}:
+3-element $(Vector{Float64}):
  3.0
  3.0
  3.0
 
 julia> ParallelUtilities.BroadcastStack(min, 1)(A, B)
-3-element Vector{Float64}:
+3-element $(Vector{Float64}):
  2.0
  2.0
  3.0
 
 julia> A = ones(2,2)*2
-2×2 Matrix{Float64}:
+2×2 $(Matrix{Float64}):
  2.0  2.0
  2.0  2.0
 
 julia> B = ones(2,3)*3
-2×3 Matrix{Float64}:
+2×3 $(Matrix{Float64}):
  3.0  3.0  3.0
  3.0  3.0  3.0
 
 julia> ParallelUtilities.BroadcastStack(+, 2)(A, B)
-2×3 Matrix{Float64}:
+2×3 $(Matrix{Float64}):
  5.0  5.0  3.0
  5.0  5.0  3.0
 ```
@@ -239,7 +239,7 @@ Flip the arguments of a binary function `f`, so that `Flip(f)(x, y) == f(y,x)`.
 julia> flip1 = ParallelUtilities.Flip(vcat);
 
 julia> flip1(2, 3)
-2-element Vector{Int64}:
+2-element $(Vector{Int}):
  3
  2
 ```
@@ -250,7 +250,7 @@ Two flips pop the original function back:
 julia> flip2 = ParallelUtilities.Flip(flip1);
 
 julia> flip2(2, 3)
-2-element Vector{Int64}:
+2-element $(Vector{Int}):
  2
  3
 ```
