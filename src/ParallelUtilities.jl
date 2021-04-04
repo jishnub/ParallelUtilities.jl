@@ -1,35 +1,20 @@
 module ParallelUtilities
-using ProgressMeter
-using Reexport
-using OffsetArrays
 
-@reexport using Distributed
+using Distributed
 
-export ProductSplit,
-    ntasks,
-    whichproc,
-    procrange_recast,
-    localindex,
-    whichproc_localindex,
-    extremadims,
-    extrema_commonlastdim,
-    pmapbatch,
-    pmapbatch_elementwise,
-    pmapsum,
-    pmapsum_elementwise,
-    pmapreduce,
-    pmapreduce_commutative,
-    pmapreduce_commutative_elementwise
+export pmapreduce
+export pmapreduce_productsplit
+export pmapbatch
+export pmapbatch_productsplit
+export workerrank
 
-include("errors.jl")
 include("productsplit.jl")
 
 include("clusterquery.jl")
-@reexport using .ClusterQueryUtils
+using .ClusterQueryUtils: procs_node
 
-include("utils.jl")
 include("trees.jl")
-include("mapreduce.jl")
 include("reductionfunctions.jl")
+include("mapreduce.jl")
 
 end # module

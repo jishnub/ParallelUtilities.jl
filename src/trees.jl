@@ -1,312 +1,202 @@
-const RemoteChannelContainer{T} = NamedTuple{(:out, :err),Tuple{RemoteChannel{Channel{T}},RemoteChannel{Channel{Bool}}}}
+abstract type BinaryTree end
 
-@inline Base.eltype(::RemoteChannelContainer{T}) where {T} = T
-
-function RemoteChannelContainer{T}(n::Int,p::Int) where {T}
-	out = RemoteChannel(()->Channel{T}(n),p)
-	err = RemoteChannel(()->Channel{Bool}(n),p)
-    RemoteChannelContainer{T}((out,err))
-end
-RemoteChannelContainer{T}(n::Int) where {T} = RemoteChannelContainer{T}(n,myid())
-RemoteChannelContainer(n::Int,p::Int) = RemoteChannelContainer{Any}(n,p)
-RemoteChannelContainer(n::Int) = RemoteChannelContainer{Any}(n,myid())
-
-abstract type Tree end
-abstract type BinaryTree <: Tree end
-
-struct SequentialBinaryTree{T<:AbstractVector{<:Integer}} <: BinaryTree
-	#= Tree of the form 
-					1
-			2				3
-		4		5		6		7
-	8		9
-	=#
-	N :: Int # total number of nodes
-	twochildendind :: Int
-	onechildendind :: Int
-	procs :: T
-
-	function SequentialBinaryTree(procs::T) where {T<:AbstractVector{Int}}
-
-		N = length(procs)
-		(N >=1) || throw(DomainError(N,
-			"need at least one node to create a binary tree"))
-
-		Ninternalnodes = prevpow(2,N) - 1
-		Nleaf = N - Ninternalnodes
-		Nonechildinternalnodes = (Ninternalnodes > 0) ? rem(Nleaf,2) : 0
-		twochildendind = div(N-1, 2)
-		onechildstartind = twochildendind + 1
-		onechildendind = onechildstartind + Nonechildinternalnodes - 1
-
-		new{T}(N,twochildendind,onechildendind,procs)
-	end
-end
-
-struct OrderedBinaryTree{T<:AbstractVector{<:Integer}} <: BinaryTree
+struct OrderedBinaryTree{PROCS <: AbstractVector{<:Integer}, PARENT <: Union{Integer, Nothing}} <: BinaryTree
 	#= Tree of the form
 
 							8
 				4						9
 		2				6
 	1		3		5		7
-					
+
 	The left branch has smaller numbers than the node, and the right
 	branch has larger numbers
+
+    A parent of nothing implies that the top node is its own parent
 	=#
 
 	N :: Int
-	procs :: T
+	procs :: PROCS
+	topnode_parent :: PARENT
 
-	function OrderedBinaryTree(procs::T) where {T<:AbstractVector{<:Integer}}
+	function OrderedBinaryTree(procs::AbstractVector{<:Integer}, p = nothing)
 		N = length(procs)
-		N >= 1 || 
-		throw(DomainError(N,
-			"need at least one node to create a BinaryTree"))
+		N >= 1 || throw(DomainError(N, "need at least one node to create a BinaryTree"))
 
-		new{T}(N,procs)
+		new{typeof(procs), typeof(p)}(N, procs, p)
 	end
 end
+Base.length(tree::OrderedBinaryTree) = length(tree.procs)
 
-abstract type SegmentedBinaryTree <: BinaryTree end
+# Special type for the top tree that correctly returns nchildren for the leaves
+struct ConnectedOrderedBinaryTree{OBT <: OrderedBinaryTree, D <: AbstractDict} <: BinaryTree
+	tree :: OBT
+	workersonhosts :: D
 
-struct SegmentedSequentialBinaryTree{T<:AbstractVector{<:Integer},
-	D<:AbstractDict} <: SegmentedBinaryTree
+	function ConnectedOrderedBinaryTree(tree::OBT, workersonhosts::D) where {OBT <: OrderedBinaryTree, D <: AbstractDict}
+		new{OBT, D}(tree, workersonhosts)
+	end
+end
+Base.length(tree::ConnectedOrderedBinaryTree) = length(tree.tree)
+workersonhosts(tree::ConnectedOrderedBinaryTree) = tree.workersonhosts
+
+struct SegmentedOrderedBinaryTree{PROCS <: AbstractVector{<:Integer}, TREE <: ConnectedOrderedBinaryTree} <: BinaryTree
 	#=
 		Each node on the cluster will have its own tree that carries out
 		a local reduction. There will  be one master node on the cluster that
-		will acquire the reduced value on each node. This will be followed 
-		by a tree to carry out reduction among the master nodes. The 
+		will acquire the reduced value on each node. This will be followed
+		by a tree to carry out reduction among the master nodes. The
 		eventual reduced result will be returned to the calling process.
 	=#
 	N :: Int
-	procs :: T
-	workersonhosts :: D
-	toptree :: SequentialBinaryTree{Vector{Int}}
+	procs :: PROCS
+	toptree :: TREE
 	nodetreestartindices :: Vector{Int}
-end
 
-struct SegmentedOrderedBinaryTree{T<:AbstractVector{<:Integer},
-	D<:AbstractDict} <: SegmentedBinaryTree
-	#=
-		Each node on the cluster will have its own tree that carries out
-		a local reduction. There will  be one master node on the cluster that
-		will acquire the reduced value on each node. This will be followed 
-		by a tree to carry out reduction among the master nodes. The 
-		eventual reduced result will be returned to the calling process.
-	=#
-	N :: Int
-	procs :: T
-	workersonhosts :: D
-	toptree :: OrderedBinaryTree{Vector{Int}}
-	nodetreestartindices :: Vector{Int}
-end
+	function SegmentedOrderedBinaryTree(N::Int, procs::PROCS,
+		toptree::TREE, nodetreestartindices::Vector{Int}) where {PROCS, TREE <: ConnectedOrderedBinaryTree}
 
-function leavesateachlevelfulltree(::Type{<:SequentialBinaryTree},Nleaves)
-	Nnodes = 2Nleaves-1
-	Nlevels = levels(Nnodes)
-	Nleaves_lowestlevel = Nnodes - ((1 << (Nlevels - 1)) - 1)
+		# check that the reduction nodes of the top tree have children
+		all(i -> nchildren(toptree[i]) == 2, 2:2:length(toptree)) || throw(ArgumentError("reduction nodes on the top tree must have 2 children each"))
 
-	return Nleaves_lowestlevel, Nnodes, Nlevels
-end
-
-function leafrankfoldedtree(::SequentialBinaryTree,Nleaves,leafno)
-
-	@assert(leafno <= Nleaves,"leafno needs to be ⩽ Nleaves")
-	
-	Nleaves_lowestlevel, Nnodes, Nlevels = 
-		leavesateachlevelfulltree(SequentialBinaryTree,Nleaves)
-
-	if leafno <= Nleaves_lowestlevel
-		leafrank = (1 << (Nlevels - 1)) - 1 + leafno
-	else
-		leafrank = Nnodes - Nleaves + leafno - Nleaves_lowestlevel
+		new{PROCS, TREE}(N, procs, toptree, nodetreestartindices)
 	end
-
-	return leafrank
 end
 
-function leafrankfoldedtree(::OrderedBinaryTree,Nleaves,leafno)
-	@assert(leafno <= Nleaves,"leafno needs to be ⩽ Nleaves")
+workersonhosts(tree::SegmentedOrderedBinaryTree) = workersonhosts(tree.toptree)
+
+function leafrankfoldedtree(::OrderedBinaryTree, Nleaves, leafno)
+	@assert(leafno <= Nleaves, "leafno needs to be ⩽ Nleaves")
 	leafrank = 2leafno - 1
 end
+leafrankfoldedtree(tree::ConnectedOrderedBinaryTree, args...) = leafrankfoldedtree(tree.tree, args...)
 
-function foldedbinarytreefromleaves(::Type{SequentialBinaryTree},leaves)
+function foldedbinarytreefromleaves(leaves)
 	Nleaves = length(leaves)
-	Nleaves_lowestlevel,Nnodes = 
-	leavesateachlevelfulltree(SequentialBinaryTree,Nleaves)
+	Nnodes = 2Nleaves - 1
 
-	treeprocs = Vector{Int}(undef,Nnodes)
-
-	# fill in the leaves
-	@views treeprocs[end - Nleaves_lowestlevel + 1:end] .= 
-		leaves[1:Nleaves_lowestlevel]
-	@views treeprocs[end - Nleaves + 1:end - Nleaves_lowestlevel] .= 
-		leaves[Nleaves_lowestlevel+1:end]
-
-	# fill in the parent nodes
-	for rank in Nnodes-1:-2:2
-		p = treeprocs[rank]
-		parentrank = div(rank,2)
-		treeprocs[parentrank] = p
-	end
-
-	SequentialBinaryTree(treeprocs)
-end
-
-function foldedbinarytreefromleaves(::Type{OrderedBinaryTree},leaves)
-	Nleaves = length(leaves)
-	Nnodes = 2Nleaves-1
-
-	allnodes = Vector{Int}(undef,Nnodes)
-	foldedbinarytreefromleaves!(OrderedBinaryTree,allnodes,leaves)
+	allnodes = Vector{Int}(undef, Nnodes)
+	foldedbinarytreefromleaves!(allnodes, leaves)
 
 	OrderedBinaryTree(allnodes)
 end
 
-function foldedbinarytreefromleaves!(::Type{OrderedBinaryTree},allnodes,leaves)
+function foldedbinarytreefromleaves!(allnodes, leaves)
 	top = topnoderank(OrderedBinaryTree(1:length(allnodes)))
 	allnodes[top] = first(leaves)
 
 	length(allnodes) == 1 && return
 
 	Nnodes_left = top - 1
-	Nleaves_left = div( Nnodes_left + 1 , 2)
+	Nleaves_left = div(Nnodes_left + 1 , 2)
 	Nleaves_right = length(leaves) - Nleaves_left
 
 	if Nleaves_left > 0
 		leaves_left = @view leaves[1:Nleaves_left]
 		leftnodes = @view allnodes[1:Nnodes_left]
-		foldedbinarytreefromleaves!(OrderedBinaryTree,leftnodes,leaves_left)
+		foldedbinarytreefromleaves!(leftnodes, leaves_left)
 	end
 
 	if Nleaves_right > 0
 		leaves_right = @view leaves[end - Nleaves_right + 1:end]
 		rightnodes = @view allnodes[top + 1:end]
-		foldedbinarytreefromleaves!(OrderedBinaryTree,rightnodes,leaves_right)
+		foldedbinarytreefromleaves!(rightnodes, leaves_right)
 	end
+
+    return allnodes
 end
 
-# Tree with a distribution of hosts specified by workersonhosts
-# workersonhosts is a Dict that maps (host=>workers)
-function SegmentedSequentialBinaryTree(procs::AbstractVector{<:Integer},
-	workersonhosts::AbstractDict{String,<:AbstractVector{<:Integer}})
-	
+function SegmentedOrderedBinaryTree(procs::AbstractVector{<:Integer}, workersonhosts::AbstractDict = procs_node(procs))
 	Np = length(procs)
-	Np >= 1 || throw(DomainError(Np,
-		"need at least one node to create a BinaryTree"))
+	Np >= 1 || throw(DomainError(Np, "need at least one node to create a BinaryTree"))
+
+    sum(length, values(workersonhosts)) == length(procs) || throw(ArgumentError("procs $procs do not match workersonhosts $workersonhosts"))
 
 	nodes = collect(keys(workersonhosts))
-	masternodes = Vector{Int}(undef,length(nodes))
-	for (nodeind,node) in enumerate(nodes)
-		workersnode = workersonhosts[node]
-		nodetree = SequentialBinaryTree(workersnode)
-		masternodes[nodeind] = topnode(nodetree).p
-	end
-	Nleaves = length(masternodes)
-	toptree = foldedbinarytreefromleaves(SequentialBinaryTree,masternodes)
-
-	toptreenonleafnodes = length(toptree) - Nleaves
-	Nnodestotal = toptreenonleafnodes + length(procs)
-
-	nodetreestartindices = Vector{Int}(undef,length(nodes))
-	nodetreestartindices[1] = toptreenonleafnodes + 1
-	for (nodeno,node) in enumerate(nodes)
-		nodeno == 1 && continue
-		prevnode = nodes[nodeno-1]
-		nodetreestartindices[nodeno] = nodetreestartindices[nodeno-1] + 
-										length(workersonhosts[prevnode])
-	end
-
-	SegmentedSequentialBinaryTree(Nnodestotal,procs,workersonhosts,
-		toptree,nodetreestartindices)
-end
-
-function SegmentedSequentialBinaryTree(procs::AbstractVector{<:Integer})
-	workersonhosts = procs_node(procs)
-	SegmentedSequentialBinaryTree(procs,workersonhosts)
-end
-
-function SegmentedOrderedBinaryTree(procs::AbstractVector{<:Integer},
-	workersonhosts::AbstractDict{String,<:AbstractVector{<:Integer}})
-	
-	Np = length(procs)
-	Np >= 1 || throw(DomainError(Np,
-		"need at least one node to create a BinaryTree"))
-
-	nodes = collect(keys(workersonhosts))
-	masternodes = Vector{Int}(undef,length(nodes))
-	for (nodeind,node) in enumerate(nodes)
+	masternodes = Vector{Int}(undef, length(nodes))
+	for (nodeind, node) in enumerate(nodes)
 		workersnode = workersonhosts[node]
 		nodetree = OrderedBinaryTree(workersnode)
 		masternodes[nodeind] = topnode(nodetree).p
 	end
 	Nleaves = length(masternodes)
-	toptree = foldedbinarytreefromleaves(OrderedBinaryTree,masternodes)
+	toptree_inner = foldedbinarytreefromleaves(masternodes)
+	toptree = ConnectedOrderedBinaryTree(toptree_inner, workersonhosts)
 
 	toptreenonleafnodes = length(toptree) - Nleaves
 	Nnodestotal = toptreenonleafnodes + length(procs)
 
-	nodetreestartindices = Vector{Int}(undef,length(nodes))
+	nodetreestartindices = Vector{Int}(undef, length(nodes))
 	nodetreestartindices[1] = toptreenonleafnodes + 1
-	for (nodeno,node) in enumerate(nodes)
+	for (nodeno, node) in enumerate(nodes)
 		nodeno == 1 && continue
-		prevnode = nodes[nodeno-1]
-		nodetreestartindices[nodeno] = nodetreestartindices[nodeno-1] + 
-										length(workersonhosts[prevnode])
+		prevnode = nodes[nodeno - 1]
+		nodetreestartindices[nodeno] = nodetreestartindices[nodeno - 1] + length(workersonhosts[prevnode])
 	end
 
-	SegmentedOrderedBinaryTree(Nnodestotal,procs,workersonhosts,
-		toptree,nodetreestartindices)
-end
-
-function SegmentedOrderedBinaryTree(procs::AbstractVector{<:Integer})
-	workersonhosts = procs_node(procs)
-	SegmentedOrderedBinaryTree(procs,workersonhosts)
+	SegmentedOrderedBinaryTree(Nnodestotal, procs, toptree, nodetreestartindices)
 end
 
 # for a single host there are no segments
-function unsegmentedtree(::Type{<:SegmentedSequentialBinaryTree})
-	SequentialBinaryTree
-end
-function unsegmentedtree(::Type{<:SegmentedOrderedBinaryTree})
-	OrderedBinaryTree
-end
-function unsegmentedtree(tree::SegmentedBinaryTree)
-	T = unsegmentedtree(typeof(tree))
-	T(tree.procs)
+function unsegmentedtree(tree::SegmentedOrderedBinaryTree)
+	OrderedBinaryTree(workers(tree))
 end
 
-@inline Base.length(tree::BinaryTree) = tree.N
-function levels(tree::Union{SequentialBinaryTree,OrderedBinaryTree})
-	levels(length(tree))
+Base.length(tree::SegmentedOrderedBinaryTree) = tree.N
+levels(tree::OrderedBinaryTree) = levels(length(tree))
+levels(n::Integer) = floor(Int, log2(n)) + 1
+
+function Base.summary(io::IO, tree::SegmentedOrderedBinaryTree)
+	Nmasternodes = length(keys(workersonhosts(tree)))
+	toptreenonleafnodes = length(toptree(tree)) - Nmasternodes
+	mapnodes = length(tree) - toptreenonleafnodes
+	print(io, length(tree), "-node ", Base.nameof(typeof(tree)))
+	print(io, " with ", mapnodes, " workers and ", toptreenonleafnodes, " extra reduction node",
+        ifelse(toptreenonleafnodes > 1, "s", ""))
 end
-levels(n::Integer) = floor(Int,log2(n)) + 1
+Base.summary(io::IO, tree::BinaryTree) = print(io, length(tree),"-element ", nameof(typeof(tree)))
 
-Base.summary(io::IO,b::Tree) = print(io,length(b),"-node ",typeof(b))
+function Base.show(io::IO, b::OrderedBinaryTree)
+	print(io, summary(b), "(", workers(b), ") with top node = ", topnode(b))
+end
+function Base.show(io::IO, b::ConnectedOrderedBinaryTree)
+	print(io, summary(b), "(", workers(b), ", ", workersonhosts(b), ")")
+end
 
-function levelfromtop(tree::OrderedBinaryTree,i::Integer)
-	1 <= i <= length(tree) || throw(BoundsError(tree,i))
-	
+function Base.show(io::IO, b::SegmentedOrderedBinaryTree)
+	summary(io, b)
+	println(io)
+	println(io, "toptree => ", toptree(b))
+	println(io, "subtrees start from indices ", b.nodetreestartindices)
+	tt = toptree(b)
+	for (ind, (host, w)) in enumerate(workersonhosts(b))
+		node = tt[2ind - 1]
+		print(io, host, " => ",  OrderedBinaryTree(w, node.parent))
+		if ind != length(workersonhosts(b))
+			println(io)
+		end
+	end
+end
+
+toptree(tree::SegmentedOrderedBinaryTree) = tree.toptree
+
+function levelfromtop(tree::OrderedBinaryTree, i::Integer)
+	1 <= i <= length(tree) || throw(BoundsError(tree, i))
+
 	top = topnoderank(tree)
 	if i == top
 		return 1
 	elseif i < top
 		subrange = 1:top - 1
 	else
-		subrange = top+1:length(tree)
+		subrange = top + 1:length(tree)
 	end
 	subtree = OrderedBinaryTree(subrange)
-	subindex = searchsortedfirst(subrange,i)
-	1 + levelfromtop(subtree,subindex)
-end
-function levelfromtop(tree::SequentialBinaryTree,i::Integer)
-	1 <= i <= length(tree) || throw(BoundsError(tree,i))
-	floor(Int,log2(i)) + 1
+	subindex = searchsortedfirst(subrange, i)
+	1 + levelfromtop(subtree, subindex)
 end
 
-function parentnoderank(tree::OrderedBinaryTree,i::Integer)
-	1 <= i <= length(tree) || throw(BoundsError(tree,i))
+function parentnoderank(tree::OrderedBinaryTree, i::Integer)
+	1 <= i <= length(tree) || throw(BoundsError(tree, i))
 
 	# The topmost node is its own parent
 	length(tree) == 1 && return 1
@@ -320,65 +210,63 @@ function parentnoderank(tree::OrderedBinaryTree,i::Integer)
 		# ired is necessarily an odd number
 		pow2level = 1 << level # 2^level
 
-		# sgn is +1 if mod(ired,4) = 1, -1 if mod(ired,4) = 3
-		sgn = 2 - mod(ired,4)
+		# sgn is +1 if mod(ired, 4) = 1, -1 if mod(ired, 4) = 3
+		sgn = 2 - mod(ired, 4)
 		return i + sgn * pow2level
 	elseif i > top
 		# right branch, possibly partially formed
 		# Carry out a recursive search
-		subtreeprocs = top+1:length(tree)
+		subtreeprocs = top + 1:length(tree)
 		subtree = OrderedBinaryTree(subtreeprocs)
-		subind = searchsortedfirst(subtreeprocs,i)
+		subind = searchsortedfirst(subtreeprocs, i)
 		if subind == topnoderank(subtree)
 			# This catches the case of there only being a leaf node
-			# in the sub-tree
+			# in the sub - tree
 			return top
 		elseif length(subtreeprocs) == 3
-			# don't subdivide to 1-node trees
-			# this lets us avoid confusing this with the case of 
+			# don't subdivide to 1 - node trees
+			# this lets us avoid confusing this with the case of
 			# the entire tree having only 1 node
 			return subtreeprocs[2]
 		end
-		pid = parentnoderank(subtree,subind)
+		pid = parentnoderank(subtree, subind)
 		return subtreeprocs[pid]
 	end
 end
-function parentnoderank(tree::SequentialBinaryTree,i::Integer)
-	1 <= i <= length(tree) || throw(BoundsError(tree,i))
+parentnoderank(tree::ConnectedOrderedBinaryTree, i::Integer) = parentnoderank(tree.tree, i)
 
-	# only one node
-	i == 1 && return 1
-	div(i,2)
-end
-
-function subtree_rank(tree::SegmentedBinaryTree,i::Integer)
-	Nmasternodes = length(keys(tree.workersonhosts))
+function subtree_rank(tree::SegmentedOrderedBinaryTree, i::Integer)
+	Nmasternodes = length(keys(workersonhosts(tree)))
 	toptreenonleafnodes = length(tree.toptree) - Nmasternodes
 
 	# node on a subtree at a host
 	subnodeno = i - toptreenonleafnodes
 
-	@assert(subnodeno > 0,"i needs to be greater than $(toptreenonleafnodes)")
+	@assert(subnodeno > 0, "i needs to be greater than $(toptreenonleafnodes)")
 
 	# find out which node this lies on
 	nptotalprevhosts = 0
-	for (host,procs) in tree.workersonhosts
+	for (host, procs) in workersonhosts(tree)
 		np = length(procs)
 		if subnodeno <= nptotalprevhosts + np
 			rankinsubtree = subnodeno - nptotalprevhosts
-			T = unsegmentedtree(typeof(tree))
-			subtree = T(tree.workersonhosts[host])
-			return subtree,rankinsubtree,nptotalprevhosts
+            w_host = workersonhosts(tree)[host]
+			subtree = OrderedBinaryTree(w_host)
+			return subtree, rankinsubtree, nptotalprevhosts
 		end
 		nptotalprevhosts += np
 	end
 end
 
-function masternodeindex(tree::SegmentedBinaryTree, p)
-	leafno = 0
-	T = unsegmentedtree(typeof(tree))
-	for (ind,w) in enumerate(values(tree.workersonhosts))
-		subtree = T(w)
+"""
+	masternodeindex(tree::SegmentedOrderedBinaryTree, p)
+
+Given the top worker `p` on one node, compute the serial order of the host that it corresponds to.
+"""
+function masternodeindex(tree::SegmentedOrderedBinaryTree, p)
+	leafno = nothing
+	for (ind, w) in enumerate(values(workersonhosts(tree)))
+		subtree = OrderedBinaryTree(w)
 		top = topnoderank(subtree)
 		if w[top] == p
 			leafno = ind
@@ -388,66 +276,15 @@ function masternodeindex(tree::SegmentedBinaryTree, p)
 	return leafno
 end
 
-toptree_to_fulltree_index(::SequentialBinaryTree, i) = i
-toptree_to_fulltree_index(::OrderedBinaryTree, i) = div(i,2)
+toptree_to_fulltree_index(::OrderedBinaryTree, i) = div(i, 2)
+toptree_to_fulltree_index(tree::ConnectedOrderedBinaryTree, i) = toptree_to_fulltree_index(tree.tree, i)
 
-fulltree_to_toptree_index(::SequentialBinaryTree, i) = i
 fulltree_to_toptree_index(::OrderedBinaryTree, i) = 2i
+fulltree_to_toptree_index(tree::ConnectedOrderedBinaryTree, i) = fulltree_to_toptree_index(tree.tree, i)
 
-function parentnoderank(tree::SegmentedBinaryTree,i::Integer)
-	1 <= i <= length(tree) || throw(BoundsError(tree,i))
+function nchildren(tree::OrderedBinaryTree, i::Integer)
+	1 <= i <= length(tree) || throw(BoundsError(tree, i))
 
-	Nmasternodes = length(keys(tree.workersonhosts))
-	toptreenonleafnodes = length(tree.toptree) - Nmasternodes
-
-	if toptreenonleafnodes == 0
-		pr = parentnoderank(unsegmentedtree(tree),i)
-
-	elseif i <= toptreenonleafnodes
-		#= In a SegmentedSequentialBinaryTree the leading indices
-		are the parent nodes of the top tree, so ind = i
-		In a SegmentedOrderedBinaryTree, the leaves are removed 
-		from the top tree, so only even numbers are left.
-		In this case, index i of the full tree refers to index 2i of the 
-		top tree, so ind = 2i
-		=#
-		ind = fulltree_to_toptree_index(tree.toptree,i)
-		p = tree.toptree[ind].p
-		#= Compute the parent of the node with rank ind on the top tree.
-		In a SegmentedSequentialBinaryTree this is what we want.
-		In a SegmentedOrderedBinaryTree, we need to convert this back to 
-		the index of the full tree, that is div(pr,2)
-		=# 
-		pr_top = parentnoderank(tree.toptree,ind)
-		pr = toptree_to_fulltree_index(tree.toptree, pr_top)
-		
-	else
-		subtree,rankinsubtree,nptotalprevhosts = subtree_rank(tree,i)
-
-		if rankinsubtree == topnoderank(subtree)
-			# masternode
-			# parent will be on the top-tree
-			p = subtree[rankinsubtree].p
-			leafno = masternodeindex(tree,p)
-			Nmasternodes = length(keys(tree.workersonhosts))
-			leafrank = leafrankfoldedtree(tree.toptree, Nmasternodes,leafno)
-			pr_top = parentnoderank(tree.toptree, leafrank)
-			# Convert back to the rank on the full tree where the 
-			# leaves of the top tree aren't stored.
-			pr = toptree_to_fulltree_index(tree.toptree, pr_top)
-		else
-			# node on a sub-tree
-			pr = parentnoderank(subtree,rankinsubtree)
-			pr += nptotalprevhosts + toptreenonleafnodes
-		end		
-	end
-
-	return pr
-end
-
-function nchildren(tree::OrderedBinaryTree,i::Integer)
-	1 <= i <= length(tree) || throw(BoundsError(tree,i))
-	
 	if isodd(i)
 		0
 	elseif i == length(tree)
@@ -456,57 +293,69 @@ function nchildren(tree::OrderedBinaryTree,i::Integer)
 		2
 	end
 end
-function nchildren(tree::SequentialBinaryTree,i::Integer)
-	1 <= i <= length(tree) || throw(BoundsError(tree,i))
+function nchildren(tree::SegmentedOrderedBinaryTree, i::Integer)
+	1 <= i <= length(tree) || throw(BoundsError(tree, i))
 
-	if i <= tree.twochildendind
-		2
-	elseif i <= tree.onechildendind
-		1
-	else
-		0
-	end
-end
-function nchildren(tree::SegmentedBinaryTree,i::Integer)
-	1 <= i <= length(tree) || throw(BoundsError(tree,i))
-
-	Nmasternodes = length(keys(tree.workersonhosts))
+	Nmasternodes = length(keys(workersonhosts(tree)))
 	toptreenonleafnodes = length(tree.toptree) - Nmasternodes
 
 	if toptreenonleafnodes == 0
-		n = nchildren(unsegmentedtree(tree),i)
+		n = nchildren(unsegmentedtree(tree), i)
 
 	elseif i <= toptreenonleafnodes
-		# The top-tree is a full binary tree.
+		# The top - tree is a full binary tree.
 		# Since the leaves aren't stored, every parent node
 		# has 2 children
 		n = 2
 	else
-		subtree,rankinsubtree = subtree_rank(tree,i)
-		n = nchildren(subtree,rankinsubtree)
+		subtree, rankinsubtree = subtree_rank(tree, i)
+		n = nchildren(subtree, rankinsubtree)
 	end
 
 	return n
 end
+function nchildren(tree::ConnectedOrderedBinaryTree, i::Integer)
+	1 <= i <= length(tree) || throw(BoundsError(tree, i))
+	if isodd(i)
+		host = ""
+		for (ind, h) in enumerate(keys(workersonhosts(tree)))
+			if ind == i ÷ 2 + 1
+				host = h
+			end
+		end
+		st = OrderedBinaryTree(workersonhosts(tree)[host])
+		nchildren(topnode(st))
+	else
+		2
+	end
+end
 
-topnoderank(::BinaryTree) = 1
+topnoderank(tree::ConnectedOrderedBinaryTree) = topnoderank(tree.tree)
 function topnoderank(tree::OrderedBinaryTree)
 	1 << (levels(tree) - 1)
 end
 function topnoderank(tree::SegmentedOrderedBinaryTree)
-	Nmasternodes = length(keys(tree.workersonhosts))
+	Nmasternodes = length(keys(workersonhosts(tree)))
 	toptreenonleafnodes = length(tree.toptree) - Nmasternodes
 
 	if toptreenonleafnodes > 0
 		tnr_top = topnoderank(tree.toptree)
 		tnr = toptree_to_fulltree_index(tree.toptree, tnr_top)
 	else
-		tnr = topnoderank(OrderedBinaryTree(tree.procs))
+		tnr = topnoderank(OrderedBinaryTree(workers(tree)))
 	end
 	return tnr
 end
 
-topnode(tree::Tree) = tree[topnoderank(tree)]
+topnode(tree::BinaryTree) = tree[topnoderank(tree)]
+function topnode(tree::OrderedBinaryTree)
+	node = tree[topnoderank(tree)]
+    if tree.topnode_parent === nothing
+	    BinaryTreeNode(node.p, node.p, node.nchildren)
+    else
+        BinaryTreeNode(node.p, tree.topnode_parent, node.nchildren)
+    end
+end
 
 # Indexing into a OrderedBinaryTree produces a BinaryTreeNode
 struct BinaryTreeNode
@@ -514,41 +363,47 @@ struct BinaryTreeNode
 	parent :: Int
 	nchildren :: Int
 
-	function BinaryTreeNode(p::Int,p_parent::Int,nchildren::Int)
-		(0 <= nchildren <= 2) || 
+	function BinaryTreeNode(p::Int, p_parent::Int, nchildren::Int)
+		(0 <= nchildren <= 2) ||
 		throw(DomainError(nchildren,
 			"attempt to construct a binary tree with $nchildren children"))
 
-		new(p,p_parent,nchildren)
+		new(p, p_parent, nchildren)
 	end
 end
 
-function Base.show(io::IO,b::BinaryTreeNode)
+function Base.show(io::IO, b::BinaryTreeNode)
 	print(io,
 		"BinaryTreeNode(p = $(b.p),"*
 		" parent = $(b.parent), nchildren = $(b.nchildren))")
 end
 
-@inline nchildren(b::BinaryTreeNode) = b.nchildren
+nchildren(b::BinaryTreeNode) = b.nchildren
 
-function Base.getindex(tree::Tree,i::Integer)
-	1 <= i <= length(tree) || throw(BoundsError(tree,i))
+Distributed.workers(tree::OrderedBinaryTree) = tree.procs
+Distributed.workers(tree::ConnectedOrderedBinaryTree) = workers(tree.tree)
+Distributed.workers(tree::SegmentedOrderedBinaryTree) = tree.procs
 
-	procs = tree.procs
-	
+Distributed.nworkers(tree::BinaryTree) = length(workers(tree))
+
+function Base.getindex(tree::BinaryTree, i::Integer)
+	1 <= i <= length(tree) || throw(BoundsError(tree, i))
+
+	procs = workers(tree)
+
 	p = procs[i]
-	pr = parentnoderank(tree,i)
+	pr = parentnoderank(tree, i)
 	p_parent = procs[pr]
-	n = nchildren(tree,i)
+	n = nchildren(tree, i)
 
-	BinaryTreeNode(p,p_parent,n)
+	BinaryTreeNode(p, p_parent, n)
 end
 
-function Base.getindex(tree::SegmentedBinaryTree,i::Integer)
-	1 <= i <= length(tree) || throw(BoundsError(tree,i))
+function Base.getindex(tree::SegmentedOrderedBinaryTree, i::Integer)
+	1 <= i <= length(tree) || throw(BoundsError(tree, i))
 
-	Nmasternodes = length(keys(tree.workersonhosts))
-	toptreenonleafnodes = length(tree.toptree) - Nmasternodes
+	Nmasternodes = length(keys(workersonhosts(tree)))
+	toptreenonleafnodes = length(toptree(tree)) - Nmasternodes
 
 	if toptreenonleafnodes == 0
 		return unsegmentedtree(tree)[i]
@@ -556,104 +411,85 @@ function Base.getindex(tree::SegmentedBinaryTree,i::Integer)
 	elseif i <= toptreenonleafnodes
 		#= In a SegmentedSequentialBinaryTree the leading indices
 		are the parent nodes of the top tree, so ind = i
-		In a SegmentedOrderedBinaryTree, the leaves are removed 
+		In a SegmentedOrderedBinaryTree, the leaves are removed
 		from the top tree, so only even numbers are left.
-		In this case, index i of the full tree refers to index 2i of the 
+		In this case, index i of the full tree refers to index 2i of the
 		top tree, so ind = 2i
 		=#
-		ind = fulltree_to_toptree_index(tree.toptree,i)
+		ind = fulltree_to_toptree_index(tree.toptree, i)
 		p = tree.toptree[ind].p
-		pr_top = parentnoderank(tree.toptree,ind)
+		pr_top = parentnoderank(tree.toptree, ind)
 		p_parent = tree.toptree[pr_top].p
 		n = 2
-		return BinaryTreeNode(p,p_parent,n)
+		return BinaryTreeNode(p, p_parent, n)
 	else
-		subtree,rankinsubtree = subtree_rank(tree,i)
+		subtree, rankinsubtree = subtree_rank(tree, i)
 
 		p = subtree[rankinsubtree].p
-		n = nchildren(subtree,rankinsubtree)
+		n = nchildren(subtree, rankinsubtree)
 
 		if rankinsubtree == topnoderank(subtree)
 			# masternode
 			# parent will be on the top tree
-			Nmasternodes = length(keys(tree.workersonhosts))
-			leafno = masternodeindex(tree,p)
-			leafrank = leafrankfoldedtree(tree.toptree, Nmasternodes,leafno)
+			Nmasternodes = length(keys(workersonhosts(tree)))
+			leafno = masternodeindex(tree, p)
+			leafrank = leafrankfoldedtree(tree.toptree, Nmasternodes, leafno)
 			pr_top = parentnoderank(tree.toptree, leafrank)
 			p_parent = tree.toptree[pr_top].p
 		else
-			# node on a sub-tree
-			pr = parentnoderank(subtree,rankinsubtree)
+			# node on a sub - tree
+			pr = parentnoderank(subtree, rankinsubtree)
 			p_parent = subtree[pr].p
 		end
-		return BinaryTreeNode(p,p_parent,n)
+		return BinaryTreeNode(p, p_parent, n)
 	end
 end
 
 # Branches between nodes
 
-struct BranchChannel{Tmap,Tred}
+struct BranchChannel
 	p :: Int
-	selfchannels :: RemoteChannelContainer{Tmap}
-	parentchannels :: RemoteChannelContainer{Tred}
-	childrenchannels :: RemoteChannelContainer{Tred}
+	parentchannel :: RemoteChannel{Channel{Any}}
+	childrenchannel :: RemoteChannel{Channel{Any}}
 	nchildren :: Int
 
-	function BranchChannel(p::Int,selfchannels::RemoteChannelContainer{Tmap},
-		parentchannels::RemoteChannelContainer{Tred},
-		childrenchannels::RemoteChannelContainer{Tred},
-		nchildren::Int) where {Tmap,Tred}
+	function BranchChannel(p::Int, parentchannel::RemoteChannel, childrenchannel::RemoteChannel, nchildren::Int)
 
-		(0 <= nchildren <= 2) || 
+		(0 <= nchildren <= 2) ||
 		throw(DomainError(nchildren,
 			"attempt to construct a binary tree with $nchildren children"))
-	
-		new{Tmap,Tred}(p,selfchannels,parentchannels,childrenchannels,nchildren)
+
+		new(p, parentchannel, childrenchannel, nchildren)
 	end
 end
-@inline nchildren(b::BranchChannel) = b.nchildren
+nchildren(b::BranchChannel) = b.nchildren
 
-function BranchChannel(p::Integer,Tmap,
-	parentchannels::RemoteChannelContainer{Tred},
-	nchildren::Int) where {Tred}
+childrenerror(nchildren) = throw(DomainError(nchildren,
+	"attempt to construct a binary tree with $nchildren children"))
 
-	(0 <= nchildren <= 2) || 
-	throw(DomainError(nchildren,
-		"attempt to construct a binary tree with $nchildren children"))
+function BranchChannel(p::Integer, parentchannel::RemoteChannel, nchildren::Integer)
 
-	Texp = Tuple{RemoteChannelContainer{Tmap},
-		RemoteChannelContainer{Tred}}
+	(0 <= nchildren <= 2) || childrenerror(nchildren)
 
-	selfchannels, childrenchannels = @sync begin
-		selftask = @async RemoteChannelContainer{Tmap}(1,p)
-		childtask = @async RemoteChannelContainer{Tred}(nchildren,p)
-		fetch.((selftask,childtask)) :: Texp
-	end
-	BranchChannel(p,selfchannels,parentchannels,childrenchannels,nchildren)
+	childrenchannel = RemoteChannel(() -> Channel(nchildren), p)
+	BranchChannel(p, parentchannel, childrenchannel, nchildren)
 end
 
-function BranchChannel{Tmap,Tred}(p::Integer,nchildren::Integer) where {Tmap,Tred}
-	(0 <= nchildren <= 2) || 
-	throw(DomainError(nchildren,
-		"attempt to construct a binary tree with $nchildren children"))
+function BranchChannel(p::Integer, nchildren::Integer)
 
-	Texp = Tuple{RemoteChannelContainer{Tred},
-		RemoteChannelContainer{Tmap},
-		RemoteChannelContainer{Tred}}
+	(0 <= nchildren <= 2) || childrenerror(nchildren)
 
-	parentchannels, selfchannels, childrenchannels = 
-	@sync begin
-		parenttask = @async RemoteChannelContainer{Tred}(1,p)
-		selftask = @async RemoteChannelContainer{Tmap}(1,p)
-		childtask = @async RemoteChannelContainer{Tred}(nchildren,p)
-		fetch.((parenttask,selftask,childtask)) :: Texp
+	parentchannel, childrenchannel = @sync begin
+		parenttask = @async RemoteChannel(() -> Channel(1), p)
+		childtask = @async RemoteChannel(() -> Channel(nchildren), p)
+		asyncmap(fetch, (parenttask, childtask))
 	end
-	BranchChannel(p,selfchannels,parentchannels,childrenchannels,nchildren)
+	BranchChannel(p, parentchannel, childrenchannel, nchildren)
 end
 
 function Base.show(io::IO, b::BranchChannel)
 	N = nchildren(b)
-	p_parent = b.parentchannels.out.where
+	p_parent = b.parentchannel.where
 	p = b.p
 
 	if N == 2
@@ -664,205 +500,42 @@ function Base.show(io::IO, b::BranchChannel)
 		str = "Leaf  : "*string(p_parent)*" ← "*string(p)
 	end
 
-	print(io,str)
+	print(io, str)
 end
 
-function finalize_except_wherewhence(r::RemoteChannel)
-	if (myid() != r.where) && (myid() != r.whence)
-		finalize(r)
-	end
-end
-function finalize_except_wherewhence(r::RemoteChannelContainer)
-	finalize_except_wherewhence.((r.out, r.err))
-end
-
-function Base.finalize(r::RemoteChannelContainer)
-	finalize.((r.out, r.err))
-end
-
-function Base.finalize(bc::BranchChannel)
-	finalize.((bc.selfchannels, bc.childrenchannels))
-	finalize_except_wherewhence(bc.parentchannels)
-end
-
-function createbranchchannels!(branches,Tmap,Tred,tree::OrderedBinaryTree,
-	superbranch::BranchChannel)
-
+function createbranchchannels!(branches, tree::OrderedBinaryTree, superbranch::BranchChannel)
 	top = topnoderank(tree)
 	topnode = tree[top]
-	N = nchildren(topnode)
-	p = topnode.p
 
-	topbranchchannels = BranchChannel(p,Tmap,superbranch.childrenchannels,N)
+	topbranchchannels = BranchChannel(topnode.p, superbranch.childrenchannel, nchildren(topnode))
 	branches[top] = topbranchchannels
 
-	length(tree) == 1 && return
-	
-	left_inds = 1:top-1
-	right_inds = top+1:length(tree)
+	length(tree) == 1 && return nothing
+
+	left_inds = 1:top - 1
+	right_inds = top + 1:length(tree)
 
 	@sync begin
 		@async if !isempty(left_inds)
-			left_child = OrderedBinaryTree(@view tree.procs[left_inds])
-			createbranchchannels!(@view(branches[left_inds]),
-				Tmap,Tred,left_child,topbranchchannels)
+			left_child = OrderedBinaryTree(@view workers(tree)[left_inds])
+			createbranchchannels!(@view(branches[left_inds]), left_child, topbranchchannels)
 		end
 		@async if !isempty(right_inds)
-			right_child = OrderedBinaryTree(@view tree.procs[right_inds])
-			createbranchchannels!(@view(branches[right_inds]),Tmap,Tred,right_child,topbranchchannels)
+			right_child = OrderedBinaryTree(@view workers(tree)[right_inds])
+			createbranchchannels!(@view(branches[right_inds]), right_child, topbranchchannels)
 		end
 	end
-	nothing 
-end
-function createbranchchannels(Tmap,Tred,tree::OrderedBinaryTree)
-
-	branches = Vector{BranchChannel{Tmap,Tred}}(undef,length(tree))
-
-	# the topmost node has to be created separately as 
-	# its children will be linked to itself
-	top = topnoderank(tree)
-	topnode = tree[top]
-	N = nchildren(topnode)
-	p = topnode.p
-	topmostbranch = BranchChannel{Tmap,Tred}(p,N)
-	branches[top] = topmostbranch 
-
-	length(tree) == 1 && return branches
-	
-	left_inds = 1:top-1
-	right_inds = top+1:length(tree)
-
-	@sync begin
-		@async if !isempty(left_inds)
-			left_child = OrderedBinaryTree(@view tree.procs[left_inds])
-			createbranchchannels!(@view(branches[left_inds]),
-				Tmap,Tred,left_child,topmostbranch)
-		end
-		@async if !isempty(right_inds)
-			right_child = OrderedBinaryTree(@view tree.procs[right_inds])
-			createbranchchannels!(@view(branches[right_inds]),
-				Tmap,Tred,right_child,topmostbranch)
-		end
-	end
-
-	return branches
+	return nothing
 end
 
-function createbranchchannels!(branches,Tmap,Tred,tree::SequentialBinaryTree, 
-	finalnoderank = length(tree))
+function createbranchchannels(tree::SegmentedOrderedBinaryTree)
 
-	length(branches) < 2 && return
-
-	# make sure that the parent nodes are populated
-	parentfilled = [Base.Event() for i=1:tree.onechildendind]
-
-	@sync for noderank in 2:finalnoderank
-		@async begin
-			node = tree[noderank]
-			p = node.p
-			pnr = parentnoderank(tree,noderank)
-			# The first node is filled, no need to wait for it
-			if pnr > 1
-				# Wait otherwise for the parent to get filled
-				wait(parentfilled[pnr])
-			end
-			parentnodebranches = branches[pnr]
-			parentchannels = parentnodebranches.childrenchannels
-			b = BranchChannel(p,Tmap,parentchannels,nchildren(node))
-			branches[noderank] = b
-			# If this is a parent node then notify that it's filled
-			if noderank <= tree.onechildendind
-				notify(parentfilled[noderank])
-			end
-		end
-	end
-end
-function createbranchchannels(Tmap,Tred,tree::SequentialBinaryTree)
-
-	branches = Vector{BranchChannel{Tmap,Tred}}(undef,length(tree))
-
-	# the topmost node has to be created separately as 
-	# it is its own parent
-	top = topnoderank(tree)
-	topnode = tree[top]
-	N = nchildren(topnode)
-	p = topnode.p
-	topmostbranch = BranchChannel{Tmap,Tred}(p,N)
-	branches[top] = topmostbranch
-
-	createbranchchannels!(branches,Tmap,Tred,tree)
-
-	return branches
-end
-
-function createbranchchannels(Tmap,Tred,tree::SegmentedSequentialBinaryTree)
-
-	nodes = keys(tree.workersonhosts)
+	nodes = keys(workersonhosts(tree))
 	toptree = tree.toptree
 	Nmasternodes = length(nodes)
 	toptreenonleafnodes = length(toptree) - Nmasternodes
 
-	branches = Vector{BranchChannel{Tmap,Tred}}(undef,length(tree))
-
-	# populate the top tree other than the masternodes
-	# This is only run if there are multiple hosts
-	if toptreenonleafnodes > 0
-		top = topnoderank(toptree)
-		topnode_toptree = toptree[top]
-		N = nchildren(topnode_toptree)
-		topmostbranch = BranchChannel{Tmap,Tred}(topnode_toptree.p,N)
-		branches[top] = topmostbranch
-		createbranchchannels!(branches,Tmap,Tred,toptree,
-			toptreenonleafnodes)
-	end
-
-	@sync for (nodeno,node) in enumerate(nodes)
-		@async begin
-			# Top node for each subtree (a masternode)
-			workersnode = tree.workersonhosts[node]
-			nodetree = SequentialBinaryTree(workersnode)
-			topnode_nodetree = topnode(nodetree)
-			p = topnode_nodetree.p
-
-			if toptreenonleafnodes > 0
-				# inherit from the parent node
-				leafno = masternodeindex(tree,p)
-				leafrank = leafrankfoldedtree(tree.toptree, Nmasternodes,leafno)
-				parentrank = parentnoderank(toptree,leafrank)
-				parentnodebranches = branches[parentrank]
-				parentchannels = parentnodebranches.childrenchannels
-			else
-				# This happens if there is only one host, 
-				# in which case there's nothing to inherit.
-				# In this case there's no difference between a 
-				# SegmentedSequentialBinaryTree and a SequentialBinaryTree
-				# The top node is created separately as it is its own parent
-				parentchannels = RemoteChannelContainer{Tred}(1,p)
-			end
-
-			b = BranchChannel(p,Tmap,parentchannels,nchildren(topnode_nodetree))
-			nodetreestartindex = tree.nodetreestartindices[nodeno]
-			branches[nodetreestartindex] = b
-
-			# Populate the rest of the tree
-			subtreeinds = StepRangeLen(nodetreestartindex,1,length(nodetree))
-			branchesnode = @view branches[subtreeinds]
-
-			createbranchchannels!(branchesnode,Tmap,Tred,nodetree)	
-		end
-	end
-
-	return branches
-end
-
-function createbranchchannels(Tmap,Tred,tree::SegmentedOrderedBinaryTree)
-
-	nodes = keys(tree.workersonhosts)
-	toptree = tree.toptree
-	Nmasternodes = length(nodes)
-	toptreenonleafnodes = length(toptree) - Nmasternodes
-
-	branches = Vector{BranchChannel{Tmap,Tred}}(undef,length(tree))
+	branches = Vector{BranchChannel}(undef, length(tree))
 
 	# populate the top tree other than the masternodes
 	# This is only run if there are multiple hosts
@@ -870,23 +543,21 @@ function createbranchchannels(Tmap,Tred,tree::SegmentedOrderedBinaryTree)
 		topnoderank_toptree = topnoderank(toptree)
 		topnode_toptree = toptree[topnoderank_toptree]
 		N = nchildren(topnode_toptree)
-		topmostbranch = BranchChannel{Tmap,Tred}(topnode_toptree.p,N)
+		topmostbranch = BranchChannel(topnode_toptree.p, N)
 		branches[topnoderank_toptree] = topmostbranch
-		
-		left_inds = 1:topnoderank_toptree-1
-		right_inds = topnoderank_toptree+1:length(toptree)
+
+		left_inds = 1:(topnoderank_toptree - 1)
+		right_inds = (topnoderank_toptree + 1):length(toptree)
 
 		@sync begin
 			@async if !isempty(left_inds)
-				left_child = OrderedBinaryTree(@view toptree.procs[left_inds])
-				createbranchchannels!(@view(branches[left_inds]),
-					Tmap,Tred,left_child,topmostbranch)
+				left_child = OrderedBinaryTree(@view workers(toptree)[left_inds])
+				createbranchchannels!(@view(branches[left_inds]), left_child, topmostbranch)
 			end
 
 			@async if !isempty(right_inds)
-				right_child = OrderedBinaryTree(@view toptree.procs[right_inds])
-				createbranchchannels!(@view(branches[right_inds]),
-					Tmap,Tred,right_child,topmostbranch)
+				right_child = OrderedBinaryTree(@view workers(toptree)[right_inds])
+				createbranchchannels!(@view(branches[right_inds]), right_child, topmostbranch)
 			end
 		end
 
@@ -899,10 +570,10 @@ function createbranchchannels(Tmap,Tred,tree::SegmentedOrderedBinaryTree)
 		end
 	end
 
-	@sync for (nodeno,node) in enumerate(nodes)
+	@sync for (nodeno, node) in enumerate(nodes)
 		@async begin
 			# Top node for each subtree (a masternode)
-			workersnode = tree.workersonhosts[node]
+			workersnode = workersonhosts(tree)[node]
 			nodetree = OrderedBinaryTree(workersnode)
 			top = topnoderank(nodetree)
 			topnode = nodetree[top]
@@ -910,48 +581,40 @@ function createbranchchannels(Tmap,Tred,tree::SegmentedOrderedBinaryTree)
 
 			if toptreenonleafnodes > 0
 				# inherit from the parent node
-				leafno = masternodeindex(tree,p)
-				leafrank = leafrankfoldedtree(tree.toptree, Nmasternodes,leafno)
+				leafno = masternodeindex(tree, p)
+				leafrank = leafrankfoldedtree(tree.toptree, Nmasternodes, leafno)
 				parentrank = parentnoderank(toptree, leafrank)
 				parentrankfulltree = toptree_to_fulltree_index(toptree, parentrank)
 				parentnodebranches = branches[parentrankfulltree]
-				parentchannels = parentnodebranches.childrenchannels
+				parentchannel = parentnodebranches.childrenchannel
 			else
-				#= This happens if there is only one host, 
+				#= This happens if there is only one host,
 				in which case there's nothing to inherit.
-				In this case there's no difference between a 
+				In this case there's no difference between a
 				SegmentedOrderedBinaryTree and an OrderedBinaryTree
 				The top node is created separately as it is its own parent
 				=#
-				parentchannels = RemoteChannelContainer{Tred}(1,p)
+				parentchannel = RemoteChannel(() -> Channel(1), p)
 			end
 
-			topbranchnode = BranchChannel(p,Tmap,parentchannels,nchildren(topnode))
+			topbranchnode = BranchChannel(p, parentchannel, nchildren(topnode))
 			nodetreestartindex = tree.nodetreestartindices[nodeno]
 			branches[nodetreestartindex + top - 1] = topbranchnode
 
 			# Populate the rest of the tree
-			left_inds_nodetree = (1:top-1)
+			left_inds_nodetree = (1:top - 1)
 			left_inds_fulltree = (nodetreestartindex - 1) .+ left_inds_nodetree
-			right_inds_nodetree = top+1:length(nodetree)
+			right_inds_nodetree = top + 1:length(nodetree)
 			right_inds_fulltree = (nodetreestartindex - 1) .+ right_inds_nodetree
 
 			@async if !isempty(left_inds_nodetree)
-				
-				left_child = OrderedBinaryTree(
-					@view nodetree.procs[left_inds_nodetree])
-				
-				createbranchchannels!(@view(branches[left_inds_fulltree]),
-					Tmap,Tred,left_child,topbranchnode)
+				left_child = OrderedBinaryTree(@view workers(nodetree)[left_inds_nodetree])
+				createbranchchannels!(@view(branches[left_inds_fulltree]), left_child, topbranchnode)
 			end
 
 			@async if !isempty(right_inds_nodetree)
-				
-				right_child = OrderedBinaryTree(
-					@view nodetree.procs[right_inds_nodetree])
-
-				createbranchchannels!(@view(branches[right_inds_fulltree]),
-					Tmap,Tred,right_child,topbranchnode)
+				right_child = OrderedBinaryTree(@view workers(nodetree)[right_inds_nodetree])
+				createbranchchannels!(@view(branches[right_inds_fulltree]), right_child, topbranchnode)
 			end
 		end
 	end
@@ -959,16 +622,47 @@ function createbranchchannels(Tmap,Tred,tree::SegmentedOrderedBinaryTree)
 	return branches
 end
 
-function createbranchchannels(Tmap,Tred,iterators::Tuple,T::Type{<:Tree})
-	w = workersactive(iterators)
-	tree = T(w)
-	branches = createbranchchannels(Tmap,Tred,tree)
-	tree,branches
-end
-function createbranchchannels(iterators::Tuple,T::Type{<:Tree})
-	createbranchchannels(Any,Any,iterators,T)
+function createbranchchannels(pool::AbstractWorkerPool, len::Integer)
+	w = workersactive(pool, len)
+	tree = SegmentedOrderedBinaryTree(w)
+	branches = createbranchchannels(tree)
+	tree, branches
 end
 
-function topbranch(tree::Tree,branches::Vector{<:BranchChannel})
-	branches[topnoderank(tree)]
+topbranch(tree::BinaryTree, branches::AbstractVector{<:BranchChannel}) = branches[topnoderank(tree)]
+
+function workersactive(pool::AbstractWorkerPool, len::Integer,
+	workers_on_hosts::AbstractDict = procs_node(workers(pool)))
+
+	nw = min(nworkers(pool), len)
+	chooseworkers(workers(pool), len, workers_on_hosts)
+end
+
+function chooseworkers(workerspool, n::Integer, workers_on_hosts::AbstractDict = procs_node(workerspool))
+	n >= 1 || throw(ArgumentError("number of workers to choose must be >= 1"))
+	length(workerspool) <= n && return workerspool
+	myhost = Libc.gethostname()
+	if myhost in keys(workers_on_hosts)
+		if length(workers_on_hosts[myhost]) >= n
+			return workers_on_hosts[myhost][1:n]
+		else
+			w_chosen = workers_on_hosts[myhost]
+			np_left = n - length(w_chosen)
+			for (host, workers_host) in workers_on_hosts
+				np_left <= 0 && break
+				host == myhost && continue
+				workers_host_section = @view workers_host[1:min(length(workers_host), np_left)]
+				w_chosen = vcat(w_chosen, workers_host_section)
+				np_left -= length(workers_host_section)
+			end
+			return w_chosen
+		end
+	else
+		return workerspool[1:n]
+	end
+end
+
+function maybetrimmedworkerpool(workers, N)
+	w = chooseworkers(workers, N)
+	WorkerPool(w)
 end
