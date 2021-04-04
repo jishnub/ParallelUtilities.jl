@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Mapreduce · ParallelUtilities.jl</title><link rel="canonical" href="https://jishnub.github.io/ParallelUtilities.jl/pmapreduce/"/><link href="https://fonts.googleapis.com/css?family=Lato|Roboto+Mono" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.0/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.0/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.0/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.11.1/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../assets/documenter.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-dark.css" data-theme-name="documenter-dark"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit">ParallelUtilities.jl</span></div><form class="docs-search" action="../search/"><input class="docs-search-query" id="documenter-search-query" name="q" type="text" placeholder="Search docs"/></form><ul class="docs-menu"><li><a class="tocitem" href="../">ParallelUtilities</a></li><li class="is-active"><a class="tocitem" href>Mapreduce</a><ul class="internal"><li><a class="tocitem" href="#Iterated-Zip"><span>Iterated Zip</span></a></li><li><a class="tocitem" href="#Non-iterated-product"><span>Non-iterated product</span></a></li><li class="toplevel"><a class="tocitem" href="#Reduction-Operators"><span>Reduction Operators</span></a></li><li><a class="tocitem" href="#Broadcasted-elementwise-operators"><span>Broadcasted elementwise operators</span></a></li><li class="toplevel"><a class="tocitem" href="#Inplace-assignment"><span>Inplace assignment</span></a></li><li><a class="tocitem" href="#Flip"><span>Flip</span></a></li><li><a class="tocitem" href="#BroadcastStack"><span>BroadcastStack</span></a></li><li><a class="tocitem" href="#Commutative"><span>Commutative</span></a></li></ul></li><li><a class="tocitem" href="../clusterquery/">ClusterQueryUtils</a></li><li><a class="tocitem" href="../api/">Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><nav class="breadcrumb"><ul class="is-hidden-mobile"><li class="is-active"><a href>Mapreduce</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Mapreduce</a></li></ul></nav><div class="docs-right"><a class="docs-edit-link" href="https://github.com/jishnub/ParallelUtilities.jl/blob/master/docs/src/pmapreduce.md#L" title="Edit on GitHub"><span class="docs-icon fab"></span><span class="docs-label is-hidden-touch">Edit on GitHub</span></a><a class="docs-settings-button fas fa-cog" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-sidebar-button fa fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a></div></header><article class="content" id="documenter-page"><h1 id="Parallel-mapreduce"><a class="docs-heading-anchor" href="#Parallel-mapreduce">Parallel mapreduce</a><a id="Parallel-mapreduce-1"></a><a class="docs-heading-anchor-permalink" href="#Parallel-mapreduce" title="Permalink"></a></h1><p>There are two modes of evaluating a parallel mapreduce that vary only in the arguments that the mapping function accepts.</p><ol><li><p>Iterated zip, where one element from the zipped iterators is splatted and passed as arguments to the mapping function. In this case the function must accept as many arguments as the number of iterators passed to mapreduce. This is analogous to a serial <code>mapreduce</code></p></li><li><p>Non-iterated product, in which case the iterator product of the arguments is distributed evenly across the workers. The mapping function in this case should accept one argument that is a collection of <code>Tuple</code>s of values. It may iterate over the argument to obtain the individual <code>Tuple</code>s.</p></li></ol><p>Each process involved in a <code>pmapreduce</code> operation carries out a local <code>mapreduce</code>, followed by a reduction across processes. The reduction is carried out in the form of a binary tree. The reduction happens in three stages:</p><ol><li>A local reduction as a part of <code>mapreduce</code></li><li>A reduction on the host across the workers on the same host. Typically on an HPC system there is an independent reduction on each node across the processes on that node.</li><li>A global reduction across hosts.</li></ol><p>The reduction operator is assumed to be associative, and reproducibility of floating-point operations is not guaranteed. For associative reductions look into various <code>mapfold*</code> methods provided by other packages, such as <a href="https://github.com/JuliaFolds/Transducers.jl"><code>Transducers</code></a>. The reduction operator is not assumed to be commutative.</p><p>A <code>pmapreduce</code> might only benefit in performance if the mapping function runs for longer than the communication overhead across processes, or if each process has dedicated memory and returns large arrays that may not be collectively stored on one process.</p><h2 id="Iterated-Zip"><a class="docs-heading-anchor" href="#Iterated-Zip">Iterated Zip</a><a id="Iterated-Zip-1"></a><a class="docs-heading-anchor-permalink" href="#Iterated-Zip" title="Permalink"></a></h2><p>The syntax for a parallel map-reduce operation is quite similar to the serial <code>mapreduce</code>, with the replacement of <code>mapreduce</code> by <code>pmapreduce</code>.</p><p>Serial:</p><pre><code class="language-julia">julia&gt; mapreduce(x -&gt; x^2, +, 1:100_000)
+333338333350000</code></pre><p>Parallel:</p><pre><code class="language-julia">julia&gt; pmapreduce(x -&gt; x^2, +, 1:100_000)
+333338333350000</code></pre><p>We may check that parallel evaluation helps in performance for a long-running process.</p><pre><code class="language-julia">julia&gt; nworkers()
+2
+
+julia&gt; @time mapreduce(x -&gt; (sleep(1); x^2), +, 1:6);
+  6.079191 seconds (54.18 k allocations: 3.237 MiB, 1.10% compilation time)
+
+julia&gt; @time pmapreduce(x -&gt; (sleep(1); x^2), +, 1:6);
+  3.365979 seconds (91.57 k allocations: 5.473 MiB, 0.87% compilation time)</code></pre><h2 id="Non-iterated-product"><a class="docs-heading-anchor" href="#Non-iterated-product">Non-iterated product</a><a id="Non-iterated-product-1"></a><a class="docs-heading-anchor-permalink" href="#Non-iterated-product" title="Permalink"></a></h2><p>The second mode of usage is similar to MPI, where each process evaluates the same function once for different arguments. This is called using</p><pre><code class="language-julia">pmapreduce_productsplit(f, op, iterators...)</code></pre><p>In this function, the iterator product of the argument <code>iterators</code> is split evenly across the workers, and the function <code>f</code> on each process receives one such section according to its rank. The argument is an iterator similar to an iterator product, and looping over it would produce Tuples <code>(iterators[1][i], iterators[2][i], ...)</code> where the index <code>i</code> depends on the rank of the worker as well as the local loop index.</p><p>As an example, we run this with 2 workers:</p><pre><code class="language-julia">julia&gt; pmapreduce_productsplit(ps -&gt; (@show collect(ps)), vcat, 1:4)
+      From worker 2:    collect(ps) = [(1,), (2,)]
+      From worker 3:    collect(ps) = [(3,), (4,)]
+4-element Vector{Tuple{Int64}}:
+ (1,)
+ (2,)
+ (3,)
+ (4,)
+
+julia&gt; pmapreduce_productsplit(ps -&gt; (@show collect(ps)), vcat, 1:3, 1:2)
+      From worker 2:    collect(ps) = [(1, 1), (2, 1), (3, 1)]
+      From worker 3:    collect(ps) = [(1, 2), (2, 2), (3, 2)]
+6-element Vector{Tuple{Int64, Int64}}:
+ (1, 1)
+ (2, 1)
+ (3, 1)
+ (1, 2)
+ (2, 2)
+ (3, 2)</code></pre><p>Note that in each case the mapping function receives the entire collection of arguments in one go, unlike a standard <code>mapreduce</code> where the function receives the arguments individually. This is chosen so that the function may perform any one-time compute-intensive task for the entire range before looping over the argument values.</p><p>Each process might return one or more values that are subsequently reduced in parallel.</p><div class="admonition is-info"><header class="admonition-header">Note</header><div class="admonition-body"><p>At present the <code>iterators</code> passed as arguments to <code>pmapreduce_productsplit</code> may only be strictly increasing ranges. This might be relaxed in the future.</p></div></div><p>The argument <code>ps</code> passed on to each worker is a <a href="../api/#ParallelUtilities.ProductSplit"><code>ParallelUtilities.ProductSplit</code></a> object. This has several methods defined for it that might aid in evaluating the mapping function locally.</p><h3 id="ProductSplit"><a class="docs-heading-anchor" href="#ProductSplit">ProductSplit</a><a id="ProductSplit-1"></a><a class="docs-heading-anchor-permalink" href="#ProductSplit" title="Permalink"></a></h3><p>A <code>ProductSplit</code> object <code>ps</code> holds the section of the iterator product that is assigned to the worker. It also encloses the worker rank and the size of the worker pool, similar to MPI&#39;s <code>Comm_rank</code> and <code>Comm_size</code>. These may be accessed as <code>workerrank(ps)</code> and <code>nworkers(ps)</code>. Unlike MPI though, the rank goes from <code>1</code> to <code>np</code>. An example where the worker rank is used (on 2 workers) is</p><pre><code class="language-julia">julia&gt; pmapreduce_productsplit(ps -&gt; ones(2) * workerrank(ps), hcat, 1:nworkers())
+2×2 Matrix{Float64}:
+ 1.0  2.0
+ 1.0  2.0</code></pre><p>The way to construct a <code>ProductSplit</code> object is <code>ParallelUtilities.ProductSplit(tuple_of_iterators, nworkers, worker_rank)</code></p><pre><code class="language-julia-repl">julia&gt; ps = ParallelUtilities.ProductSplit((1:2, 3:4), 2, 1)
+2-element ProductSplit [(1, 3), ... , (2, 3)]
+
+julia&gt; ps |&gt; collect
+2-element Vector{Tuple{Int64, Int64}}:
+ (1, 3)
+ (2, 3)</code></pre><p>A <code>ProductSplit</code> that wraps <code>AbstractUnitRange</code>s has several efficient functions defined for it, such as <code>length</code>, <code>minimumelement</code>, <code>maximumelement</code> and <code>getindex</code>, each of which returns in <code>O(1)</code> without iterating over the object.</p><pre><code class="language-julia-repl">julia&gt; ps[1]
+(1, 3)</code></pre><p>The function <code>maximumelement</code>, <code>minimumelement</code> and <code>extremaelement</code> treat the <code>ProductSplit</code> object as a linear view of an <code>n</code>-dimensional iterator product. These functions look through the elements in the <code>dim</code>-th dimension of the iterator product, and if possible, return the corresponding extremal element in <code>O(1)</code> time. Similarly, for a <code>ProductSplit</code> object that wraps <code>AbstractUnitRange</code>s, it&#39;s possible to know if a value is contained in the iterator in <code>O(1)</code> time.</p><pre><code class="language-julia">julia&gt; ps = ParallelUtilities.ProductSplit((1:100_000, 1:100_000, 1:100_000), 25000, 1500)
+40000000000-element ProductSplit [(1, 1, 5997), ... , (100000, 100000, 6000)]
+
+julia&gt; @btime (3,3,5998) in $ps
+  111.399 ns (0 allocations: 0 bytes)
+true
+
+julia&gt; @btime ParallelUtilities.maximumelement($ps, dims = 1)
+  76.534 ns (0 allocations: 0 bytes)
+100000
+
+julia&gt; @btime ParallelUtilities.minimumelement($ps, dims = 2)
+  73.724 ns (0 allocations: 0 bytes)
+1
+
+julia&gt; @btime ParallelUtilities.extremaelement($ps, dims = 2)
+  76.332 ns (0 allocations: 0 bytes)
+(1, 100000)</code></pre><p>The number of unique elements along a particular dimension may be obtained as</p><pre><code class="language-julia">julia&gt; @btime ParallelUtilities.nelements($ps, dims = 3)
+  118.441 ns (0 allocations: 0 bytes)
+4</code></pre><p>It&#39;s also possible to drop the leading dimension of a <code>ProductSplit</code> that wraps <code>AbstractUnitRange</code>s to obtain an analogous operator that contains the unique elements along the remaining dimension. This is achieved using <code>ParallelUtilities.dropleading</code>.</p><pre><code class="language-julia-repl">julia&gt; ps = ParallelUtilities.ProductSplit((1:3, 1:3, 1:2), 4, 2)
+5-element ProductSplit [(3, 2, 1), ... , (1, 1, 2)]
+
+julia&gt; collect(ps)
+5-element Vector{Tuple{Int64, Int64, Int64}}:
+ (3, 2, 1)
+ (1, 3, 1)
+ (2, 3, 1)
+ (3, 3, 1)
+ (1, 1, 2)
+
+julia&gt; ps2 = ParallelUtilities.dropleading(ps)
+3-element ProductSection [(2, 1), ... , (1, 2)]
+
+julia&gt; collect(ps2)
+3-element Vector{Tuple{Int64, Int64}}:
+ (2, 1)
+ (3, 1)
+ (1, 2)</code></pre><p>The process may be repeated multiple times:</p><pre><code class="language-julia-repl">julia&gt; collect(ParallelUtilities.dropleading(ps2))
+2-element Vector{Tuple{Int64}}:
+ (1,)
+ (2,)</code></pre><h1 id="Reduction-Operators"><a class="docs-heading-anchor" href="#Reduction-Operators">Reduction Operators</a><a id="Reduction-Operators-1"></a><a class="docs-heading-anchor-permalink" href="#Reduction-Operators" title="Permalink"></a></h1><p>Any standard Julia reduction operator may be passed to <code>pmapreduce</code>. Aside from this, this package defines certain operators that may be used as well in a reduction.</p><h2 id="Broadcasted-elementwise-operators"><a class="docs-heading-anchor" href="#Broadcasted-elementwise-operators">Broadcasted elementwise operators</a><a id="Broadcasted-elementwise-operators-1"></a><a class="docs-heading-anchor-permalink" href="#Broadcasted-elementwise-operators" title="Permalink"></a></h2><p>The general way to construct an elementwise operator using this package is using <a href="../api/#ParallelUtilities.BroadcastFunction"><code>ParallelUtilities.BroadcastFunction</code></a>.</p><p>For example, a broadcasted sum operator may be constructed using</p><pre><code class="language-julia-repl">julia&gt; ParallelUtilities.BroadcastFunction(+);</code></pre><p>The function call <code>ParallelUtilities.BroadcastFunction(op)(x, y)</code> perform the fused elementwise operation <code>op.(x, y)</code>.</p><div class="admonition is-info"><header class="admonition-header">Julia 1.6 and above</header><div class="admonition-body"><p>Julia versions above <code>v&quot;1.6&quot;</code> provide a function <code>Base.BroadcastFunction</code> which is equivalent to <code>ParallelUtilities.BroadcastFunction</code>.</p></div></div><h1 id="Inplace-assignment"><a class="docs-heading-anchor" href="#Inplace-assignment">Inplace assignment</a><a id="Inplace-assignment-1"></a><a class="docs-heading-anchor-permalink" href="#Inplace-assignment" title="Permalink"></a></h1><p>The function <a href="../api/#ParallelUtilities.broadcastinplace-Union{Tuple{N}, Tuple{Any, Val{N}}} where N"><code>ParallelUtilities.broadcastinplace</code></a> may be used to construct a binary operator that broadcasts a function over its arguments and stores the result inplace in one of the arguments. This is particularly useful if the results in intermediate evaluations are not important, as this cuts down on allocations in the reduction.</p><p>Several operators for common functions are pre-defined for convenience.</p><ol><li><a href="../api/#ParallelUtilities.elementwisesum!"><code>ParallelUtilities.elementwisesum!</code></a></li><li><a href="../api/#ParallelUtilities.elementwiseproduct!"><code>ParallelUtilities.elementwiseproduct!</code></a></li><li><a href="../api/#ParallelUtilities.elementwisemin!"><code>ParallelUtilities.elementwisemin!</code></a></li><li><a href="../api/#ParallelUtilities.elementwisemax!"><code>ParallelUtilities.elementwisemax!</code></a></li></ol><p>Each of these functions overwrites the first argument with the result.</p><div class="admonition is-category-warn"><header class="admonition-header">Warn</header><div class="admonition-body"><p>The pre-defined elementwise operators are assumed to be commutative, so, if used in <code>pmapreduce</code>, the order of arguments passed to the function is not guaranteed. In particular this might not be in order of the <code>workerrank</code>. These functions should only be used if both the arguments support the inplace assignment, eg. if they have identical axes.</p></div></div><h2 id="Flip"><a class="docs-heading-anchor" href="#Flip">Flip</a><a id="Flip-1"></a><a class="docs-heading-anchor-permalink" href="#Flip" title="Permalink"></a></h2><p>The <a href="../api/#ParallelUtilities.Flip"><code>ParallelUtilities.Flip</code></a> function may be used to wrap a binary function to flips the order of arguments. For example</p><pre><code class="language-julia-repl">julia&gt; vcat(1,2)
+2-element Vector{Int64}:
+ 1
+ 2
+
+julia&gt; ParallelUtilities.Flip(vcat)(1,2)
+2-element Vector{Int64}:
+ 2
+ 1</code></pre><p><code>Flip</code> may be combined with inplace assignment operators to change the argument that is overwritten.</p><pre><code class="language-julia-repl">julia&gt; x = ones(3); y = ones(3);
+
+julia&gt; op1 = ParallelUtilities.elementwisesum!; # overwrites the first argument
+
+julia&gt; op1(x, y); x
+3-element Vector{Float64}:
+ 2.0
+ 2.0
+ 2.0
+
+julia&gt; x = ones(3); y = ones(3);
+
+julia&gt; op2 = ParallelUtilities.Flip(op1); # ovrewrites the second argument
+
+julia&gt; op2(x, y); y
+3-element Vector{Float64}:
+ 2.0
+ 2.0
+ 2.0</code></pre><h2 id="BroadcastStack"><a class="docs-heading-anchor" href="#BroadcastStack">BroadcastStack</a><a id="BroadcastStack-1"></a><a class="docs-heading-anchor-permalink" href="#BroadcastStack" title="Permalink"></a></h2><p>This function may be used to combine arrays having overlapping axes to obtain a new array that spans the union of axes of the arguments. The overlapping section is computed by applying the reduction function to that section.</p><p>We construct a function that concatenates arrays along the first dimension with overlapping indices summed.</p><pre><code class="language-julia-repl">julia&gt; f = ParallelUtilities.BroadcastStack(+, 1);</code></pre><p>We apply this to two arrays having different indices</p><pre><code class="language-julia-repl">julia&gt; f(ones(2), ones(4))
+4-element Vector{Float64}:
+ 2.0
+ 2.0
+ 1.0
+ 1.0</code></pre><p>This function is useful to reduce <a href="https://github.com/JuliaArrays/OffsetArrays.jl"><code>OffsetArray</code>s</a> where each process evaluates a potentially overlapping section of the entire array.</p><div class="admonition is-info"><header class="admonition-header">Note</header><div class="admonition-body"><p>A <code>BroadcastStack</code> function requires its arguments to have the same dimensionality, and identical axes along non-concatenated dimensions. In particular it is not possible to block-concatenate arrays using this function.</p></div></div><div class="admonition is-info"><header class="admonition-header">Note</header><div class="admonition-body"><p>A <code>BroadcastStack</code> function does not operate in-place.</p></div></div><h2 id="Commutative"><a class="docs-heading-anchor" href="#Commutative">Commutative</a><a id="Commutative-1"></a><a class="docs-heading-anchor-permalink" href="#Commutative" title="Permalink"></a></h2><p>In general this package does not assume that a reduction operator is commutative. It&#39;s possible to declare an operator to be commutative in its arguments by wrapping it in the tag <a href="../api/#ParallelUtilities.Commutative"><code>ParallelUtilities.Commutative</code></a>. </p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« ParallelUtilities</a><a class="docs-footer-nextpage" href="../clusterquery/">ClusterQueryUtils »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> on <span class="colophon-date" title="Sunday 4 April 2021 13:42">Sunday 4 April 2021</span>. Using Julia version 1.6.0.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
