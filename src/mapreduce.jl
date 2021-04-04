@@ -140,7 +140,7 @@ function reducedvalue(op, node::SubTreeNode, pipe::BranchChannel, selfoutchannel
 
     @sync for i = 1:nchildren(pipe)
         @async begin
-            child_pval = take!(pipe.childrenchannels)
+            child_pval = take!(pipe.childrenchannel)
             if errorstatus(child_pval)
                 seterrorflag(err_ch, true)
             else
@@ -156,7 +156,7 @@ function reducedvalue(op, node::SubTreeNode, pipe::BranchChannel, selfoutchannel
 
     return pval(rank, false, redval)
 end
-function reducedvalue(op, node::TopTreeNode, pipe::BranchChannel{R}, ::Any; reducekw...) where {R}
+function reducedvalue(op, node::TopTreeNode, pipe::BranchChannel, ::Any; reducekw...)
     rank = node.rank
 
     N = nchildren(pipe)
@@ -166,7 +166,7 @@ function reducedvalue(op, node::TopTreeNode, pipe::BranchChannel{R}, ::Any; redu
 
     @sync for i in 1:N
         @async begin
-            child_pval = take!(pipe.childrenchannels)
+            child_pval = take!(pipe.childrenchannel)
             if errorstatus(child_pval)
                 seterrorflag(err_ch, true)
             else
@@ -190,14 +190,14 @@ function reducenode(op, node::ReductionNode, pipe::BranchChannel, selfoutchannel
         kwdict = Dict(kwargs)
         pop!(kwdict, :init, nothing)
         res = reducedvalue(op, node, pipe, selfoutchannel; kwdict...)
-        put!(pipe.parentchannels, res)
+        put!(pipe.parentchannel, res)
     catch
-        put!(pipe.parentchannels, errorpval(rank))
+        put!(pipe.parentchannel, errorpval(rank))
         rethrow()
     finally
-        finalize(pipe)
         GC.gc()
     end
+
     return nothing
 end
 
@@ -227,7 +227,7 @@ function pmapreduceworkers(f, op, tree_branches, iterators; reducekw...)
     end
 
     tb = topbranch(tree, branches)
-    value(take!(tb.parentchannels))
+    value(take!(tb.parentchannel))
 end
 
 """

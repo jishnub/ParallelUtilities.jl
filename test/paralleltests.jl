@@ -14,6 +14,55 @@ using Distributed
     leafrankfoldedtree,
     TopTreeNode, SubTreeNode,
     NoSplat, reducedvalue
+
+    function parentnoderank(tree::SegmentedOrderedBinaryTree, i::Integer)
+        1 <= i <= length(tree) || throw(BoundsError(tree, i))
+
+        Nmasternodes = length(keys(ParallelUtilities.workersonhosts(tree)))
+        toptreenonleafnodes = length(tree.toptree) - Nmasternodes
+
+        if toptreenonleafnodes == 0
+            pr = parentnoderank(ParallelUtilities.unsegmentedtree(tree),i)
+
+        elseif i <= toptreenonleafnodes
+            #= In a SegmentedSequentialBinaryTree the leading indices
+            are the parent nodes of the top tree, so ind = i
+            In a SegmentedOrderedBinaryTree, the leaves are removed
+            from the top tree, so only even numbers are left.
+            In this case, index i of the full tree refers to index 2i of the
+            top tree, so ind = 2i
+            =#
+            ind = ParallelUtilities.fulltree_to_toptree_index(tree.toptree, i)
+            p = tree.toptree[ind].p
+            #  Compute the parent of the node with rank ind on the top tree.
+            # In a SegmentedSequentialBinaryTree this is what we want.
+            # In a SegmentedOrderedBinaryTree, we need to convert this back to
+            # the index of the full tree, that is div(pr, 2)
+            pr_top = parentnoderank(tree.toptree, ind)
+            pr = ParallelUtilities.toptree_to_fulltree_index(tree.toptree, pr_top)
+        else
+            subtree, rankinsubtree, nptotalprevhosts = ParallelUtilities.subtree_rank(tree, i)
+
+            if rankinsubtree == ParallelUtilities.topnoderank(subtree)
+                # masternode
+                # parent will be on the top - tree
+                p = subtree[rankinsubtree].p
+                leafno = ParallelUtilities.masternodeindex(tree, p)
+                Nmasternodes = length(keys(ParallelUtilities.workersonhosts(tree)))
+                leafrank = ParallelUtilities.leafrankfoldedtree(tree.toptree, Nmasternodes, leafno)
+                pr_top = parentnoderank(tree.toptree, leafrank)
+                # Convert back to the rank on the full tree where the
+                # leaves of the top tree aren't stored.
+                pr = ParallelUtilities.toptree_to_fulltree_index(tree.toptree, pr_top)
+            else
+                # node on a sub - tree
+                pr = parentnoderank(subtree, rankinsubtree)
+                pr += nptotalprevhosts + toptreenonleafnodes
+            end
+        end
+
+        return pr
+    end
 end
 
 macro testsetwithinfo(str, ex)
@@ -417,6 +466,21 @@ end;
         put!(childrenchannel, ParallelUtilities.pval(1, false, 1))
         put!(childrenchannel, ParallelUtilities.pval(2, false, 2))
         @test_throws Exception reducedvalue(x -> error(""), ParallelUtilities.TopTreeNode(1), pipe, nothing)
+    end
+
+    @testset "fake multiple hosts" begin
+        tree = ParallelUtilities.SegmentedOrderedBinaryTree([1,1], OrderedDict("host1" => 1:1, "host2" => 1:1))
+        branches = ParallelUtilities.createbranchchannels(tree)
+        @test ParallelUtilities.pmapreduceworkers(x -> 1, +, (tree, branches), (1:4,)) == 4
+
+        if nworkers() > 1
+            p = procs_node()
+            # Choose workers on the same node to avoid communication bottlenecks in testing
+            w = first(values(p))
+            tree = ParallelUtilities.SegmentedOrderedBinaryTree(w, OrderedDict("host1" => w[1]:w[1], "host2" => w[2]:w[end]))
+            branches = ParallelUtilities.createbranchchannels(tree)
+            @test ParallelUtilities.pmapreduceworkers(x -> 1, +, (tree, branches), (1:length(w),)) == length(w)
+        end
     end
 end
 

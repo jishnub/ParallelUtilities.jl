@@ -139,5 +139,6 @@ end
         tree = SegmentedOrderedBinaryTree(1:8, OrderedDict("host1" => 1:4, "host2" => 5:8))
         show(io, tree)
         show(io, ParallelUtilities.toptree(tree))
+        show(io, ParallelUtilities.toptree(tree).tree)
     end
 end;
