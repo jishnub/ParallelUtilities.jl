@@ -22,15 +22,15 @@ function initializenode_threads(sleeptime)
 end
 
 function main_threads(sleeptime)
-    workers_node_pool = ParallelUtilities.workerpool_node()
-    w_nodes = workers(workers_node_pool)
-    pmapreduce(x -> initializenode_threads(sleeptime), hcat, workers_node_pool, 1:length(w_nodes))
+    workers_node_pool = ParallelUtilities.workerpool_nodes()
+    nw_nodes = nworkers(workers_node_pool)
+    pmapreduce(x -> initializenode_threads(sleeptime), hcat, workers_node_pool, 1:nw_nodes)
 end
 
 function main_serial(sleeptime)
-    workers_node_pool = ParallelUtilities.workerpool_node()
-    w_nodes = workers(workers_node_pool)
-    mapreduce(x -> initialize_serial(sleeptime), hcat, 1:length(w_nodes))
+    workers_node_pool = ParallelUtilities.workerpool_nodes()
+    nw_nodes = nworkers(workers_node_pool)
+    mapreduce(x -> initialize_serial(sleeptime), hcat, 1:nw_nodes)
 end
 
 function compare_with_serial()

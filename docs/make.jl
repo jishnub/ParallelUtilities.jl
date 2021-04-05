@@ -16,6 +16,11 @@ makedocs(;
     pages=[
         "ParallelUtilities" => "index.md",
         "Mapreduce" => "pmapreduce.md",
+        "Examples" => [
+            "pmapreduce" => "examples/pmapreduce.md",
+            "SharedArrays" => "examples/sharedarrays.md",
+            "Threads" => "examples/threads.md",
+        ],
         "ClusterQueryUtils" => "clusterquery.md",
         "Reference" => "api.md",
     ],

@@ -4,8 +4,9 @@ using Aqua
 using ParallelUtilities
 using Documenter
 using OffsetArrays
-import ParallelUtilities: pval, value, chooseworkers, BinaryTreeNode, BranchChannel,
+import ParallelUtilities: pval, value, BinaryTreeNode, BranchChannel,
 ProductSplit, SegmentedOrderedBinaryTree
+import ParallelUtilities.ClusterQueryUtils: chooseworkers
 
 @testset "Project quality" begin
     Aqua.test_all(ParallelUtilities)

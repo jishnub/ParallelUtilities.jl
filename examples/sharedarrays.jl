@@ -14,7 +14,7 @@ end
 function initializenode_sharedarray(sleeptime)
     pids = ParallelUtilities.workers_myhost()
     s = SharedArray{Int}((2_000,), pids = pids)
-    @sync for (ind, p) in enumerate(pids)
+    @sync for p in pids
         @spawnat p initialize_localpart(s, sleeptime)
     end
     return sdata(s)
@@ -31,15 +31,15 @@ function initialize_serial(sleeptime)
 end
 
 function main_sharedarray(sleeptime)
-    workers_node_pool = ParallelUtilities.workerpool_node()
-    w_node = workers(workers_node_pool)
-    pmapreduce(x -> initializenode_sharedarray(sleeptime), hcat, workers_node_pool, 1:length(w_node))
+    workers_node_pool = ParallelUtilities.workerpool_nodes()
+    nw_node = nworkers(workers_node_pool)
+    pmapreduce(x -> initializenode_sharedarray(sleeptime), hcat, workers_node_pool, 1:nw_node)
 end
 
 function main_serial(sleeptime)
-    workers_node_pool = ParallelUtilities.workerpool_node()
-    w_node = workers(workers_node_pool)
-    mapreduce(x -> initialize_serial(sleeptime), hcat, 1:length(w_node))
+    workers_node_pool = ParallelUtilities.workerpool_nodes()
+    nw_node = nworkers(workers_node_pool)
+    mapreduce(x -> initialize_serial(sleeptime), hcat, 1:nw_node)
 end
 
 function compare_with_serial()
