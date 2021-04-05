@@ -666,3 +666,30 @@ function maybetrimmedworkerpool(workers, N)
 	w = chooseworkers(workers, N)
 	WorkerPool(w)
 end
+
+"""
+    workerpool_node([pool::AbstractWorkerPool = WorkerPool(workers())])
+
+Return a `WorkerPool` with one worker per machine/node.
+"""
+workerpool_node(pool::AbstractWorkerPool) = WorkerPool(oneworkerpernode(workers(pool)))
+workerpool_node() = WorkerPool(oneworkerpernode())
+
+"""
+    oneworkerpernode([workers = workers()])
+
+Return a subsample of workers such that each `pid` in the returned vector is located on
+one machine/node of the cluster.
+"""
+function oneworkerpernode(workers = workers())
+    workers_on_hosts = procs_node(workers)
+    [first(v) for v in values(workers_on_hosts)]
+end
+
+"""
+    workers_myhost([workers = workers()])
+
+Return a list of all workers that are on the local machine/node of the cluster.
+"""
+workers_myhost(workers = workers()) = procs_node(workers)[Libc.gethostname()]
+workers_myhost(pool::AbstractWorkerPool) = workers_myhost(workers(pool))
