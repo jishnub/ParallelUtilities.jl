@@ -61,9 +61,15 @@ struct SegmentedOrderedBinaryTree{PROCS <: AbstractVector{<:Integer}, TREE <: Co
 		new{PROCS, TREE}(N, procs, toptree, nodetreestartindices)
 	end
 end
+<<<<<<< HEAD
 
 workersonhosts(tree::SegmentedOrderedBinaryTree) = workersonhosts(tree.toptree)
 
+=======
+
+workersonhosts(tree::SegmentedOrderedBinaryTree) = workersonhosts(tree.toptree)
+
+>>>>>>> master
 function leafrankfoldedtree(::OrderedBinaryTree, Nleaves, leafno)
 	@assert(leafno <= Nleaves, "leafno needs to be ⩽ Nleaves")
 	leafrank = 2leafno - 1
