@@ -5,6 +5,7 @@ using Distributed
     using Test
     using ParallelUtilities
     using ParallelUtilities.ClusterQueryUtils
+    using ParallelUtilities.ClusterQueryUtils: oneworkerpernode
     using OffsetArrays
     import ParallelUtilities: BinaryTreeNode, BranchChannel,
     OrderedBinaryTree, SegmentedOrderedBinaryTree,
@@ -675,3 +676,28 @@ end
         @test v == [1:nworkers();]
     end
 end;
+
+@testset "ClusterQueryUtils" begin
+    # These tests assume that all the workers are on the same node
+    p = procs_node()
+    myhost = Libc.gethostname()
+    if myhost in keys(p)
+        w_myhost = p[myhost]
+        @test sort(workers_myhost(w_myhost)) == sort(w_myhost)
+        @test sort(workers_myhost(WorkerPool(w_myhost))) == sort(w_myhost)
+
+        w = oneworkerpernode(w_myhost)
+        @test length(w) == 1
+        @test (@fetchfrom w[1] Libc.gethostname()) == myhost
+
+        pool = workerpool_nodes(WorkerPool(w_myhost))
+        w_pool = workers(pool)
+        @test length(w_pool) == 1
+        @test (@fetchfrom w_pool[1] Libc.gethostname()) == myhost
+    end
+
+    w = workers(workerpool_nodes())
+    @test !isempty(w)
+    host_w = @fetchfrom w[1] Libc.gethostname()
+    @test w[1] in p[host_w]
+end

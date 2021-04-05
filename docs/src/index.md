@@ -105,4 +105,4 @@ This performance gap might reduce in the future.
 
 1. This package currently does not implement a specialized `mapreduce` for arrays, so the behavior might differ for specialized array argument types (eg. `DistributedArray`s). This might change in the future.
 
-2. This package deals with distributed (multi-core) parallelism, and at this moment it has not been tested alongside multi-threading.
+2. This package deals with distributed (multi-core) parallelism, and at this moment it has not been tested extensively alongside multi-threading. Multithreading + multiprocessing has been tested where the number of threads times the number of processes equals the number of available cores. See [an example](examples/threads.md) of multithreading used in such a form, where each node uses threads locally, and reduction across nodes is performed using multiprocessing.

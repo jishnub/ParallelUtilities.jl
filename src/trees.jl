@@ -630,39 +630,3 @@ function createbranchchannels(pool::AbstractWorkerPool, len::Integer)
 end
 
 topbranch(tree::BinaryTree, branches::AbstractVector{<:BranchChannel}) = branches[topnoderank(tree)]
-
-function workersactive(pool::AbstractWorkerPool, len::Integer,
-	workers_on_hosts::AbstractDict = procs_node(workers(pool)))
-
-	nw = min(nworkers(pool), len)
-	chooseworkers(workers(pool), len, workers_on_hosts)
-end
-
-function chooseworkers(workerspool, n::Integer, workers_on_hosts::AbstractDict = procs_node(workerspool))
-	n >= 1 || throw(ArgumentError("number of workers to choose must be >= 1"))
-	length(workerspool) <= n && return workerspool
-	myhost = Libc.gethostname()
-	if myhost in keys(workers_on_hosts)
-		if length(workers_on_hosts[myhost]) >= n
-			return workers_on_hosts[myhost][1:n]
-		else
-			w_chosen = workers_on_hosts[myhost]
-			np_left = n - length(w_chosen)
-			for (host, workers_host) in workers_on_hosts
-				np_left <= 0 && break
-				host == myhost && continue
-				workers_host_section = @view workers_host[1:min(length(workers_host), np_left)]
-				w_chosen = vcat(w_chosen, workers_host_section)
-				np_left -= length(workers_host_section)
-			end
-			return w_chosen
-		end
-	else
-		return workerspool[1:n]
-	end
-end
-
-function maybetrimmedworkerpool(workers, N)
-	w = chooseworkers(workers, N)
-	WorkerPool(w)
-end
