@@ -7,8 +7,6 @@
 
 Parallel mapreduce and other helpful functions for HPC, meant primarily for embarassingly parallel operations that often require one to split up a list of tasks into subsections that may be processed on individual cores.
 
-Note: This package deals with distributed (multi-core) parallelism, and at this moment it has not been tested alongside multi-threading.
-
 # Installation
 
 Install the package using
