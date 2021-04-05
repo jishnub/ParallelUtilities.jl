@@ -105,10 +105,4 @@ Testing sharedarray
 Results match : true
 ```
 
-The full script may be found [here](sharedarrays.jl). To run this, use
-
-```julia
-julia> @everywhere include("sharedarrays.jl")
-
-julia> SharedArraysTiming.compare_with_serial()
-```
+The full script may be found in the examples directory.

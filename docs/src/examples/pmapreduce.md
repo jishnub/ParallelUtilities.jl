@@ -51,10 +51,4 @@ Tesing parallel
 Results match : true
 ```
 
-The full script may be found [here](pmapreduce.jl). To run this, use
-
-```julia
-julia> @everywhere include("pmapreduce.jl")
-
-julia> PMapReduceTiming.compare_with_serial()
-```
+The full script may be found in the examples directory.

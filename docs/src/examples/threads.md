@@ -85,11 +85,4 @@ Testing threads
 Results match : true
 ```
 
-The full script may be found [here](threads.jl). To run this, use
-
-```julia
-julia> @everywhere include("threads.jl")
-
-julia> ThreadsTiming.compare_with_serial()
-```
-
+The full script may be found in the examples directory.
