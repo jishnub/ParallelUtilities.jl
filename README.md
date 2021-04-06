@@ -4,6 +4,7 @@
 [![codecov](https://codecov.io/gh/jishnub/ParallelUtilities.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/jishnub/ParallelUtilities.jl)
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://jishnub.github.io/ParallelUtilities.jl/stable)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://jishnub.github.io/ParallelUtilities.jl/dev)
+[![DOI](https://zenodo.org/badge/198215953.svg)](https://zenodo.org/badge/latestdoi/198215953)
 
 Parallel mapreduce and other helpful functions for HPC, meant primarily for embarassingly parallel operations that often require one to split up a list of tasks into subsections that may be processed on individual cores.
 
