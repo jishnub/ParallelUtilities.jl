@@ -337,6 +337,7 @@ end
                     end
                 end
             end
+            @test whichproc_localindex((1:1,1:1), (1,2), 1) === nothing
         end
 
         @testset "getindex" begin
