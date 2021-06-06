@@ -906,7 +906,9 @@ julia> ParallelUtilities.ProductSplit(iters, np, 4) |> collect
 """
 function whichproc_localindex(iterators::Tuple{Vararg{AbstractRange}}, val::Tuple, np::Integer)
     procid = whichproc(iterators, val, np)
+    procid === nothing && return nothing
     index = localindex(ProductSplit(iterators, np, procid), val)
+    index === nothing && return nothing
     return procid, index
 end
 
