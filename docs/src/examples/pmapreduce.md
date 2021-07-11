@@ -42,6 +42,26 @@ end
 
 We compare the performance of the serial and parallel evaluations using 20 cores on one node:
 
+We define a caller function first
+
+```julia
+function compare_with_serial()
+    # precompile
+    main_mapreduce(0)
+    main_pmapreduce(0)
+
+    # time
+    println("Tesing serial")
+    A = @time main_mapreduce(5e-6)
+    println("Tesing parallel")
+    B = @time main_pmapreduce(5e-6)
+
+    # check results
+    println("Results match : ", A == B)
+end
+```
+
+We run this caller on the cluster:
 ```julia
 julia> compare_with_serial()
 Tesing serial
