@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Reference · ParallelUtilities.jl</title><script data-outdated-warner src="../assets/warner.js"></script><link rel="canonical" href="https://jishnub.github.io/ParallelUtilities.jl/api/"/><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.039/juliamono-regular.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.13.11/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../assets/documenter.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../">ParallelUtilities.jl</a></span></div><form class="docs-search" action="../search/"><input class="docs-search-query" id="documenter-search-query" name="q" type="text" placeholder="Search docs"/></form><ul class="docs-menu"><li><a class="tocitem" href="../">ParallelUtilities</a></li><li><a class="tocitem" href="../pmapreduce/">Mapreduce</a></li><li><span class="tocitem">Examples</span><ul><li><a class="tocitem" href="../examples/pmapreduce/">pmapreduce</a></li><li><a class="tocitem" href="../examples/sharedarrays/">SharedArrays</a></li><li><a class="tocitem" href="../examples/threads/">Threads</a></li></ul></li><li><a class="tocitem" href="../clusterquery/">ClusterQueryUtils</a></li><li class="is-active"><a class="tocitem" href>Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><nav class="breadcrumb"><ul class="is-hidden-mobile"><li class="is-active"><a href>Reference</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Reference</a></li></ul></nav><div class="docs-right"><a class="docs-edit-link" href="https://github.com/jishnub/ParallelUtilities.jl/blob/master/docs/src/api.md#L" title="Edit on GitHub"><span class="docs-icon fab"></span><span class="docs-label is-hidden-touch">Edit on GitHub</span></a><a class="docs-settings-button fas fa-cog" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-sidebar-button fa fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a></div></header><article class="content" id="documenter-page"><h1 id="ParallelUtilities.jl"><a class="docs-heading-anchor" href="#ParallelUtilities.jl">ParallelUtilities.jl</a><a id="ParallelUtilities.jl-1"></a><a class="docs-heading-anchor-permalink" href="#ParallelUtilities.jl" title="Permalink"></a></h1><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.AbstractConstrainedProduct" href="#ParallelUtilities.AbstractConstrainedProduct"><code>ParallelUtilities.AbstractConstrainedProduct</code></a> — <span class="docstring-category">Type</span></header><section><div><pre><code class="language-julia">AbstractConstrainedProduct{T, N, Q}</code></pre><p>Supertype of <a href="#ParallelUtilities.ProductSplit"><code>ProductSplit</code></a> and <a href="#ParallelUtilities.ProductSection"><code>ProductSection</code></a>.</p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL9-L13">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.BroadcastFunction" href="#ParallelUtilities.BroadcastFunction"><code>ParallelUtilities.BroadcastFunction</code></a> — <span class="docstring-category">Type</span></header><section><div><pre><code class="language-julia">BroadcastFunction(f)</code></pre><p>Construct a binary function that evaluates <code>f.(x, y)</code> given the arguments <code>x</code> and <code>y</code>.</p><div class="admonition is-info"><header class="admonition-header">Note</header><div class="admonition-body"><p>The function <code>BroadcastFunction(f)</code> is equivalent to <code>Base.BroadcastFunction(f)</code> on Julia versions 1.6 and above.</p></div></div><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; ParallelUtilities.BroadcastFunction(+)(ones(3), ones(3))
+3-element Vector{Float64}:
+ 2.0
+ 2.0
+ 2.0</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/reductionfunctions.jl#LL13-L30">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.BroadcastStack" href="#ParallelUtilities.BroadcastStack"><code>ParallelUtilities.BroadcastStack</code></a> — <span class="docstring-category">Type</span></header><section><div><pre><code class="language-julia">BroadcastStack(f, dims)(x::AbstractArray, y::AbstractArray)</code></pre><p>Construct a binary function that stacks its arguments along <code>dims</code>, with overlapping indices <code>I</code> being replaced by <code>f(x[I], y[I])</code>. The arguments <code>x</code> and <code>y</code> must both be <code>n</code>-dimensional arrays that have identical axes along all dimensions aside from those specified by <code>dims</code>. The axes of the result along each dimensions <code>d</code> in <code>dims</code> would be <code>union(axes(x, d), axes(y, d))</code>. Along the other dimensions the result has the same axes as <code>x</code> and <code>y</code>.</p><div class="admonition is-info"><header class="admonition-header">Note</header><div class="admonition-body"><p>If the resulting axes along the concatenated dimensions are not 1-based, one might require an offset array package such as <a href="https://github.com/JuliaArrays/OffsetArrays.jl"><code>OffsetArrays.jl</code></a>.</p></div></div><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; A = ones(2)*2
+2-element Vector{Float64}:
+ 2.0
+ 2.0
+
+julia&gt; B = ones(3)*3
+3-element Vector{Float64}:
+ 3.0
+ 3.0
+ 3.0
+
+julia&gt; ParallelUtilities.BroadcastStack(min, 1)(A, B)
+3-element Vector{Float64}:
+ 2.0
+ 2.0
+ 3.0
+
+julia&gt; A = ones(2,2)*2
+2×2 Matrix{Float64}:
+ 2.0  2.0
+ 2.0  2.0
+
+julia&gt; B = ones(2,3)*3
+2×3 Matrix{Float64}:
+ 3.0  3.0  3.0
+ 3.0  3.0  3.0
+
+julia&gt; ParallelUtilities.BroadcastStack(+, 2)(A, B)
+2×3 Matrix{Float64}:
+ 5.0  5.0  3.0
+ 5.0  5.0  3.0</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/reductionfunctions.jl#LL125-L172">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.Commutative" href="#ParallelUtilities.Commutative"><code>ParallelUtilities.Commutative</code></a> — <span class="docstring-category">Type</span></header><section><div><pre><code class="language-julia">Commutative</code></pre><p>Declare a reduction operator to be commutative in its arguments. No check is performed to ascertain if the operator is indeed commutative.</p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/reductionfunctions.jl#LL1-L6">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.Flip" href="#ParallelUtilities.Flip"><code>ParallelUtilities.Flip</code></a> — <span class="docstring-category">Type</span></header><section><div><pre><code class="language-julia">Flip(f)</code></pre><p>Flip the arguments of a binary function <code>f</code>, so that <code>Flip(f)(x, y) == f(y,x)</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; flip1 = ParallelUtilities.Flip(vcat);
+
+julia&gt; flip1(2, 3)
+2-element Vector{Int64}:
+ 3
+ 2</code></pre><p>Two flips pop the original function back:</p><pre><code class="language-julia-repl">julia&gt; flip2 = ParallelUtilities.Flip(flip1);
+
+julia&gt; flip2(2, 3)
+2-element Vector{Int64}:
+ 2
+ 3</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/reductionfunctions.jl#LL232-L257">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.ProductSection" href="#ParallelUtilities.ProductSection"><code>ParallelUtilities.ProductSection</code></a> — <span class="docstring-category">Type</span></header><section><div><pre><code class="language-julia">ProductSection{T, N, Q&lt;:NTuple{N,AbstractRange}}</code></pre><p>Iterator that loops over a specified section of the outer product of ranges in. If the ranges are strictly increasing, the iteration will be in reverse - lexicographic order. Given <code>N</code> ranges, each element returned by the iterator will be a tuple of length <code>N</code> with one element from each range.</p><p>See also: <a href="#ParallelUtilities.ProductSplit"><code>ProductSplit</code></a></p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL22-L32">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.ProductSection-Tuple{Tuple{Vararg{AbstractRange, N} where N}, AbstractUnitRange}" href="#ParallelUtilities.ProductSection-Tuple{Tuple{Vararg{AbstractRange, N} where N}, AbstractUnitRange}"><code>ParallelUtilities.ProductSection</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">ProductSection(iterators::Tuple{Vararg{AbstractRange}}, inds::AbstractUnitRange)</code></pre><p>Construct a <code>ProductSection</code> iterator that represents a 1D view of the outer product of the ranges provided in <code>iterators</code>, with the range of indices in the view being specified by <code>inds</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; p = ParallelUtilities.ProductSection((1:3, 4:6), 5:8);
+
+julia&gt; collect(p)
+4-element Vector{Tuple{Int64, Int64}}:
+ (2, 5)
+ (3, 5)
+ (1, 6)
+ (2, 6)
+
+julia&gt; collect(p) == collect(Iterators.product(1:3, 4:6))[5:8]
+true</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL67-L88">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.ProductSplit" href="#ParallelUtilities.ProductSplit"><code>ParallelUtilities.ProductSplit</code></a> — <span class="docstring-category">Type</span></header><section><div><pre><code class="language-julia">ProductSplit{T, N, Q&lt;:NTuple{N,AbstractRange}}</code></pre><p>Iterator that loops over a section of the outer product of ranges. If the ranges are strictly increasing, the iteration is in reverse - lexicographic order. Given <code>N</code> ranges, each element returned by the iterator will be a tuple of length <code>N</code> with one element from each range.</p><p>See also: <a href="#ParallelUtilities.ProductSection"><code>ProductSection</code></a></p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL103-L112">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.ProductSplit-Tuple{Tuple{Vararg{AbstractRange, N} where N}, Integer, Integer}" href="#ParallelUtilities.ProductSplit-Tuple{Tuple{Vararg{AbstractRange, N} where N}, Integer, Integer}"><code>ParallelUtilities.ProductSplit</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">ProductSplit(iterators::Tuple{Vararg{AbstractRange}}, np::Integer, p::Integer)</code></pre><p>Construct a <code>ProductSplit</code> iterator that represents the outer product of the iterators split over <code>np</code> workers, with this instance reprsenting the values on the <code>p</code>-th worker.</p><div class="admonition is-info"><header class="admonition-header">Note</header><div class="admonition-body"><p><code>p</code> here refers to the rank of the worker, and is unrelated to the worker ID obtained by executing <code>myid()</code> on that worker.</p></div></div><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; ParallelUtilities.ProductSplit((1:2, 4:5), 2, 1) |&gt; collect
+2-element Vector{Tuple{Int64, Int64}}:
+ (1, 4)
+ (2, 4)
+
+julia&gt; ParallelUtilities.ProductSplit((1:2, 4:5), 2, 2) |&gt; collect
+2-element Vector{Tuple{Int64, Int64}}:
+ (1, 5)
+ (2, 5)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL132-L155">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.broadcastinplace-Union{Tuple{N}, Tuple{Any, Val{N}}} where N" href="#ParallelUtilities.broadcastinplace-Union{Tuple{N}, Tuple{Any, Val{N}}} where N"><code>ParallelUtilities.broadcastinplace</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">broadcastinplace(f, ::Val{N}) where {N}</code></pre><p>Construct a binary operator that evaluates <code>f.(x, y)</code> and overwrites the <code>N</code>th argument with the result. For <code>N == 1</code> this evaluates <code>x .= f.(x, y)</code>, whereas for <code>N == 2</code> this evaluates <code>y .= f.(x, y)</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; op = ParallelUtilities.broadcastinplace(+, Val(1));
+
+julia&gt; x = ones(3); y = ones(3);
+
+julia&gt; op(x, y)
+3-element Vector{Float64}:
+ 2.0
+ 2.0
+ 2.0
+
+julia&gt; x # overwritten
+3-element Vector{Float64}:
+ 2.0
+ 2.0
+ 2.0</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/reductionfunctions.jl#LL43-L68">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.childindex-Tuple{ParallelUtilities.AbstractConstrainedProduct, Any}" href="#ParallelUtilities.childindex-Tuple{ParallelUtilities.AbstractConstrainedProduct, Any}"><code>ParallelUtilities.childindex</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">childindex(ps::AbstractConstrainedProduct, ind)</code></pre><p>Return a tuple containing the indices of the individual <code>AbstractRange</code>s corresponding to the element that is present at index <code>ind</code> in the outer product of the ranges.</p><div class="admonition is-info"><header class="admonition-header">Note</header><div class="admonition-body"><p>The index <code>ind</code> corresponds to the outer product of the ranges, and not to <code>ps</code>.</p></div></div><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; iters = (1:5, 2:4, 1:3);
+
+julia&gt; ps = ParallelUtilities.ProductSplit(iters, 7, 1);
+
+julia&gt; ind = 6;
+
+julia&gt; cinds = ParallelUtilities.childindex(ps, ind)
+(1, 2, 1)
+
+julia&gt; v = collect(Iterators.product(iters...));
+
+julia&gt; getindex.(iters, cinds) == v[ind]
+true</code></pre><p>See also: <a href="#ParallelUtilities.childindexshifted-Tuple{ParallelUtilities.AbstractConstrainedProduct, Any}"><code>childindexshifted</code></a></p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL220-L248">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.childindexshifted-Tuple{ParallelUtilities.AbstractConstrainedProduct, Any}" href="#ParallelUtilities.childindexshifted-Tuple{ParallelUtilities.AbstractConstrainedProduct, Any}"><code>ParallelUtilities.childindexshifted</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">childindexshifted(ps::AbstractConstrainedProduct, ind)</code></pre><p>Return a tuple containing the indices in the individual iterators given an index of <code>ps</code>.</p><p>If the iterators <code>(r1, r2, ...)</code> are used to generate <code>ps</code>, then return <code>(i1, i2, ...)</code> such that <code>ps[ind] == (r1[i1], r2[i2], ...)</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; iters = (1:5, 2:4, 1:3);
+
+julia&gt; ps = ParallelUtilities.ProductSplit(iters, 7, 3);
+
+julia&gt; psind = 4;
+
+julia&gt; cinds = ParallelUtilities.childindexshifted(ps, psind)
+(3, 1, 2)
+
+julia&gt; getindex.(iters, cinds) == ps[psind]
+true</code></pre><p>See also: <a href="#ParallelUtilities.childindex-Tuple{ParallelUtilities.AbstractConstrainedProduct, Any}"><code>childindex</code></a></p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL263-L288">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.dropleading-Tuple{ParallelUtilities.AbstractConstrainedProduct{T, N, var&quot;#s1&quot;} where {T, N, var&quot;#s1&quot;&lt;:Tuple{Vararg{AbstractUnitRange, N}}}}" href="#ParallelUtilities.dropleading-Tuple{ParallelUtilities.AbstractConstrainedProduct{T, N, var&quot;#s1&quot;} where {T, N, var&quot;#s1&quot;&lt;:Tuple{Vararg{AbstractUnitRange, N}}}}"><code>ParallelUtilities.dropleading</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">dropleading(ps::AbstractConstrainedProduct{T, N, NTuple{N,AbstractUnitRange}}) where {T,N}</code></pre><p>Return a <code>ProductSection</code> leaving out the first iterator contained in <code>ps</code>. The range of values of the remaining iterators in the resulting <code>ProductSection</code> will be the same as in <code>ps</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; ps = ParallelUtilities.ProductSplit((1:5, 2:4, 1:3), 7, 3);
+
+julia&gt; collect(ps)
+7-element Vector{Tuple{Int64, Int64, Int64}}:
+ (5, 4, 1)
+ (1, 2, 2)
+ (2, 2, 2)
+ (3, 2, 2)
+ (4, 2, 2)
+ (5, 2, 2)
+ (1, 3, 2)
+
+julia&gt; ParallelUtilities.dropleading(ps) |&gt; collect
+3-element Vector{Tuple{Int64, Int64}}:
+ (4, 1)
+ (2, 2)
+ (3, 2)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL917-L944">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.elementwisemax!" href="#ParallelUtilities.elementwisemax!"><code>ParallelUtilities.elementwisemax!</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia">elementwisemax!(x, y)</code></pre><p>Binary reduction operator that performs an elementwise <code>max</code> and stores the result inplace in <code>x</code>. The value of <code>x</code> is overwritten in the process.</p><p>Functionally <code>elementwisemax!(x, y)</code> is equivalent to <code>x .= max.(x, y)</code>.</p><div class="admonition is-info"><header class="admonition-header">Note</header><div class="admonition-body"><p>The operator is assumed to be commutative.</p></div></div></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/reductionfunctions.jl#LL112-L122">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.elementwisemin!" href="#ParallelUtilities.elementwisemin!"><code>ParallelUtilities.elementwisemin!</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia">elementwisemin!(x, y)</code></pre><p>Binary reduction operator that performs an elementwise <code>min</code> and stores the result inplace in <code>x</code>. The value of <code>x</code> is overwritten in the process.</p><p>Functionally <code>elementwisemin!(x, y)</code> is equivalent to <code>x .= min.(x, y)</code>.</p><div class="admonition is-info"><header class="admonition-header">Note</header><div class="admonition-body"><p>The operator is assumed to be commutative.</p></div></div></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/reductionfunctions.jl#LL99-L109">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.elementwiseproduct!" href="#ParallelUtilities.elementwiseproduct!"><code>ParallelUtilities.elementwiseproduct!</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia">elementwiseproduct!(x, y)</code></pre><p>Binary reduction operator that performs an elementwise product and stores the result inplace in <code>x</code>. The value of <code>x</code> is overwritten in the process.</p><p>Functionally <code>elementwiseproduct!(x, y)</code> is equivalent to <code>x .= x .* y</code>.</p><div class="admonition is-info"><header class="admonition-header">Note</header><div class="admonition-body"><p>The operator is assumed to be commutative.</p></div></div></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/reductionfunctions.jl#LL86-L96">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.elementwisesum!" href="#ParallelUtilities.elementwisesum!"><code>ParallelUtilities.elementwisesum!</code></a> — <span class="docstring-category">Function</span></header><section><div><pre><code class="language-julia">elementwisesum!(x, y)</code></pre><p>Binary reduction operator that performs an elementwise product and stores the result inplace in <code>x</code>. The value of <code>x</code> is overwritten in the process.</p><p>Functionally <code>elementwisesum!(x, y)</code> is equivalent to <code>x .= x .+ y</code>.</p><div class="admonition is-info"><header class="admonition-header">Note</header><div class="admonition-body"><p>The operator is assumed to be commutative.</p></div></div></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/reductionfunctions.jl#LL73-L83">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.extrema_commonlastdim-Tuple{ParallelUtilities.AbstractConstrainedProduct{T, N, var&quot;#s1&quot;} where {T, N, var&quot;#s1&quot;&lt;:Tuple{Vararg{AbstractUnitRange, N}}}}" href="#ParallelUtilities.extrema_commonlastdim-Tuple{ParallelUtilities.AbstractConstrainedProduct{T, N, var&quot;#s1&quot;} where {T, N, var&quot;#s1&quot;&lt;:Tuple{Vararg{AbstractUnitRange, N}}}}"><code>ParallelUtilities.extrema_commonlastdim</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">extrema_commonlastdim(ps::AbstractConstrainedProduct{T, N, &lt;:NTuple{N,AbstractUnitRange}}) where {T,N}</code></pre><p>Return the reverse - lexicographic extrema of values taken from ranges contained in <code>ps</code>, where the pairs of ranges are constructed by concatenating the ranges along each dimension with the last one.</p><p>For two ranges this simply returns <code>([first(ps)], [last(ps)])</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; ps = ParallelUtilities.ProductSplit((1:3, 4:7, 2:7), 10, 2);
+
+julia&gt; collect(ps)
+8-element Vector{Tuple{Int64, Int64, Int64}}:
+ (3, 6, 2)
+ (1, 7, 2)
+ (2, 7, 2)
+ (3, 7, 2)
+ (1, 4, 3)
+ (2, 4, 3)
+ (3, 4, 3)
+ (1, 5, 3)
+
+julia&gt; ParallelUtilities.extrema_commonlastdim(ps)
+([(1, 2), (6, 2)], [(3, 3), (5, 3)])</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL621-L648">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.extremadims-Tuple{ParallelUtilities.AbstractConstrainedProduct}" href="#ParallelUtilities.extremadims-Tuple{ParallelUtilities.AbstractConstrainedProduct}"><code>ParallelUtilities.extremadims</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">extremadims(ps::AbstractConstrainedProduct)</code></pre><p>Compute the extrema of the sections of all the ranges contained in <code>ps</code>. Functionally this is equivalent to</p><pre><code class="language-julia">map(i -&gt; extrema(ps, dims = i), 1:_niterators(ps))</code></pre><p>but it is implemented more efficiently.</p><p>Returns a <code>Tuple</code> containing the <code>(min, max)</code> pairs along each dimension, such that the <code>i</code>-th index of the result contains the <code>extrema</code> along the section of the <code>i</code>-th range contained locally.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; ps = ParallelUtilities.ProductSplit((1:2, 4:5), 2, 1);
+
+julia&gt; collect(ps)
+2-element Vector{Tuple{Int64, Int64}}:
+ (1, 4)
+ (2, 4)
+
+julia&gt; ParallelUtilities.extremadims(ps)
+((1, 2), (4, 4))</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL583-L611">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.extremaelement-Tuple{ParallelUtilities.AbstractConstrainedProduct{T, N, var&quot;#s1&quot;} where {T, N, var&quot;#s1&quot;&lt;:Tuple{Vararg{AbstractUnitRange, N}}}}" href="#ParallelUtilities.extremaelement-Tuple{ParallelUtilities.AbstractConstrainedProduct{T, N, var&quot;#s1&quot;} where {T, N, var&quot;#s1&quot;&lt;:Tuple{Vararg{AbstractUnitRange, N}}}}"><code>ParallelUtilities.extremaelement</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">extremaelement(ps::AbstractConstrainedProduct; dims::Integer)</code></pre><p>Compute the <code>extrema</code> of the section of the range number <code>dims</code> contained in <code>ps</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; ps = ParallelUtilities.ProductSplit((1:2, 4:5), 2, 1);
+
+julia&gt; collect(ps)
+2-element Vector{Tuple{Int64, Int64}}:
+ (1, 4)
+ (2, 4)
+
+julia&gt; ParallelUtilities.extremaelement(ps, dims = 1)
+(1, 2)
+
+julia&gt; ParallelUtilities.extremaelement(ps, dims = 2)
+(4, 4)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL524-L544">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.indexinproduct-Union{Tuple{N}, Tuple{Tuple{Vararg{AbstractRange, N}}, Tuple{Vararg{Any, N}}}} where N" href="#ParallelUtilities.indexinproduct-Union{Tuple{N}, Tuple{Tuple{Vararg{AbstractRange, N}}, Tuple{Vararg{Any, N}}}} where N"><code>ParallelUtilities.indexinproduct</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">indexinproduct(iterators::NTuple{N, AbstractRange}, val::NTuple{N, Any}) where {N}</code></pre><p>Return the index of <code>val</code> in the outer product of <code>iterators</code>. Return nothing if <code>val</code> is not present.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; iterators = (1:4, 1:3, 3:5);
+
+julia&gt; val = (2, 2, 4);
+
+julia&gt; ind = ParallelUtilities.indexinproduct(iterators, val)
+18
+
+julia&gt; collect(Iterators.product(iterators...))[ind] == val
+true</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL685-L703">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.localindex-Union{Tuple{T}, Tuple{ParallelUtilities.AbstractConstrainedProduct{T, N, Q} where {N, Q}, T}} where T" href="#ParallelUtilities.localindex-Union{Tuple{T}, Tuple{ParallelUtilities.AbstractConstrainedProduct{T, N, Q} where {N, Q}, T}} where T"><code>ParallelUtilities.localindex</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">localindex(ps::AbstractConstrainedProduct{T}, val::T) where {T}</code></pre><p>Return the index of <code>val</code> in <code>ps</code>. Return <code>nothing</code> if the value is not found.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; ps = ParallelUtilities.ProductSplit((1:3, 4:5:20), 3, 2);
+
+julia&gt; collect(ps)
+4-element Vector{Tuple{Int64, Int64}}:
+ (2, 9)
+ (3, 9)
+ (1, 14)
+ (2, 14)
+
+julia&gt; ParallelUtilities.localindex(ps, (3, 9))
+2</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL855-L875">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.masternodeindex-Tuple{ParallelUtilities.SegmentedOrderedBinaryTree, Any}" href="#ParallelUtilities.masternodeindex-Tuple{ParallelUtilities.SegmentedOrderedBinaryTree, Any}"><code>ParallelUtilities.masternodeindex</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">masternodeindex(tree::SegmentedOrderedBinaryTree, p)</code></pre><p>Given the top worker <code>p</code> on one node, compute the serial order of the host that it corresponds to.</p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/trees.jl#LL261-L265">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.maximumelement-Tuple{ParallelUtilities.AbstractConstrainedProduct{T, N, var&quot;#s1&quot;} where {T, N, var&quot;#s1&quot;&lt;:Tuple{Vararg{AbstractUnitRange, N}}}}" href="#ParallelUtilities.maximumelement-Tuple{ParallelUtilities.AbstractConstrainedProduct{T, N, var&quot;#s1&quot;} where {T, N, var&quot;#s1&quot;&lt;:Tuple{Vararg{AbstractUnitRange, N}}}}"><code>ParallelUtilities.maximumelement</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">maximumelement(ps::AbstractConstrainedProduct; dims::Integer)</code></pre><p>Compute the maximum value of the section of the range number <code>dims</code> contained in <code>ps</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; ps = ParallelUtilities.ProductSplit((1:2, 4:5), 2, 1);
+
+julia&gt; collect(ps)
+2-element Vector{Tuple{Int64, Int64}}:
+ (1, 4)
+ (2, 4)
+
+julia&gt; ParallelUtilities.maximumelement(ps, dims = 1)
+2
+
+julia&gt; ParallelUtilities.maximumelement(ps, dims = 2)
+4</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL420-L440">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.minimumelement-Tuple{ParallelUtilities.AbstractConstrainedProduct{T, N, var&quot;#s1&quot;} where {T, N, var&quot;#s1&quot;&lt;:Tuple{Vararg{AbstractUnitRange, N}}}}" href="#ParallelUtilities.minimumelement-Tuple{ParallelUtilities.AbstractConstrainedProduct{T, N, var&quot;#s1&quot;} where {T, N, var&quot;#s1&quot;&lt;:Tuple{Vararg{AbstractUnitRange, N}}}}"><code>ParallelUtilities.minimumelement</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">minimumelement(ps::AbstractConstrainedProduct; dims::Integer)</code></pre><p>Compute the minimum value of the section of the range number <code>dims</code> contained in <code>ps</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; ps = ParallelUtilities.ProductSplit((1:2, 4:5), 2, 1);
+
+julia&gt; collect(ps)
+2-element Vector{Tuple{Int64, Int64}}:
+ (1, 4)
+ (2, 4)
+
+julia&gt; ParallelUtilities.minimumelement(ps, dims = 1)
+1
+
+julia&gt; ParallelUtilities.minimumelement(ps, dims = 2)
+4</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL472-L492">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.nelements-Tuple{ParallelUtilities.AbstractConstrainedProduct{T, N, var&quot;#s1&quot;} where {T, N, var&quot;#s1&quot;&lt;:Tuple{Vararg{AbstractUnitRange, N}}}}" href="#ParallelUtilities.nelements-Tuple{ParallelUtilities.AbstractConstrainedProduct{T, N, var&quot;#s1&quot;} where {T, N, var&quot;#s1&quot;&lt;:Tuple{Vararg{AbstractUnitRange, N}}}}"><code>ParallelUtilities.nelements</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">nelements(ps::AbstractConstrainedProduct{T, N, &lt;:NTuple{N,AbstractUnitRange}}; dims::Integer) where {T,N}</code></pre><p>Compute the number of unique values in the section of the <code>dims</code>-th range contained in <code>ps</code>.</p><p>The function is defined currently only for iterator products of <code>AbstractUnitRange</code>s.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; ps = ParallelUtilities.ProductSplit((1:5, 2:4, 1:3), 7, 3);
+
+julia&gt; collect(ps)
+7-element Vector{Tuple{Int64, Int64, Int64}}:
+ (5, 4, 1)
+ (1, 2, 2)
+ (2, 2, 2)
+ (3, 2, 2)
+ (4, 2, 2)
+ (5, 2, 2)
+ (1, 3, 2)
+
+julia&gt; ParallelUtilities.nelements(ps, dims = 1)
+5
+
+julia&gt; ParallelUtilities.nelements(ps, dims = 2)
+3
+
+julia&gt; ParallelUtilities.nelements(ps, dims = 3)
+2</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL360-L390">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.pmapbatch-Tuple{Any, Distributed.AbstractWorkerPool, Vararg{Any, N} where N}" href="#ParallelUtilities.pmapbatch-Tuple{Any, Distributed.AbstractWorkerPool, Vararg{Any, N} where N}"><code>ParallelUtilities.pmapbatch</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">pmapbatch(f, [pool::AbstractWorkerPool], iterators...)</code></pre><p>Carry out a <code>pmap</code> with the <code>iterators</code> divided evenly among the available workers.</p><p>See also: <a href="#ParallelUtilities.pmapreduce-Tuple{Any, Any, Distributed.AbstractWorkerPool, Vararg{Any, N} where N}"><code>pmapreduce</code></a></p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/mapreduce.jl#LL286-L292">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.pmapbatch_productsplit-Tuple{Any, Distributed.AbstractWorkerPool, Vararg{Any, N} where N}" href="#ParallelUtilities.pmapbatch_productsplit-Tuple{Any, Distributed.AbstractWorkerPool, Vararg{Any, N} where N}"><code>ParallelUtilities.pmapbatch_productsplit</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">pmapbatch_productsplit(f, [pool::AbstractWorkerPool], iterators...)</code></pre><p>Carry out a <code>pmap</code> with the outer product of <code>iterators</code> divided evenly among the available workers. The function <code>f</code> must accept a collection of <code>Tuple</code>s.</p><p>See also: <a href="#ParallelUtilities.pmapbatch-Tuple{Any, Distributed.AbstractWorkerPool, Vararg{Any, N} where N}"><code>pmapbatch</code></a>, <a href="#ParallelUtilities.pmapreduce_productsplit-Tuple{Any, Any, Distributed.AbstractWorkerPool, Vararg{Any, N} where N}"><code>pmapreduce_productsplit</code></a></p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/mapreduce.jl#LL303-L310">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.pmapreduce-Tuple{Any, Any, Distributed.AbstractWorkerPool, Vararg{Any, N} where N}" href="#ParallelUtilities.pmapreduce-Tuple{Any, Any, Distributed.AbstractWorkerPool, Vararg{Any, N} where N}"><code>ParallelUtilities.pmapreduce</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">pmapreduce(f, op, [pool::AbstractWorkerPool], iterators...; reducekw...)</code></pre><p>Evaluate a parallel <code>mapreduce</code> over the elements from <code>iterators</code>. For multiple iterators, apply <code>f</code> elementwise.</p><p>The keyword arguments <code>reducekw</code> are passed on to the reduction.</p><p>See also: <a href="#ParallelUtilities.pmapreduce_productsplit-Tuple{Any, Any, Distributed.AbstractWorkerPool, Vararg{Any, N} where N}"><code>pmapreduce_productsplit</code></a></p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/mapreduce.jl#LL233-L242">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.pmapreduce_productsplit-Tuple{Any, Any, Distributed.AbstractWorkerPool, Vararg{Any, N} where N}" href="#ParallelUtilities.pmapreduce_productsplit-Tuple{Any, Any, Distributed.AbstractWorkerPool, Vararg{Any, N} where N}"><code>ParallelUtilities.pmapreduce_productsplit</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">pmapreduce_productsplit(f, op, [pool::AbstractWorkerPool], iterators...; reducekw...)</code></pre><p>Evaluate a parallel mapreduce over the outer product of elements from <code>iterators</code>. The product of <code>iterators</code> is split over the workers available, and each worker is assigned a section of the product. The function <code>f</code> should accept a single argument that is a collection of <code>Tuple</code>s.</p><p>The keyword arguments <code>reducekw</code> are passed on to the reduction.</p><p>See also: <a href="#ParallelUtilities.pmapreduce-Tuple{Any, Any, Distributed.AbstractWorkerPool, Vararg{Any, N} where N}"><code>pmapreduce</code></a></p></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/mapreduce.jl#LL266-L276">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.procrange_recast-Tuple{ParallelUtilities.AbstractConstrainedProduct, Integer}" href="#ParallelUtilities.procrange_recast-Tuple{ParallelUtilities.AbstractConstrainedProduct, Integer}"><code>ParallelUtilities.procrange_recast</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">procrange_recast(ps::AbstractConstrainedProduct, np_new::Integer)</code></pre><p>Return the range of processor ranks that would contain the values in <code>ps</code> if the iterators used to construct <code>ps</code> were split across <code>np_new</code> processes.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; iters = (1:10, 4:6, 1:4);
+
+julia&gt; ps = ParallelUtilities.ProductSplit(iters, 5, 2); # split across 5 processes initially
+
+julia&gt; ParallelUtilities.procrange_recast(ps, 10) # If `iters` were spread across 10 processes
+3:4</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL835-L850">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.procrange_recast-Tuple{Tuple{AbstractRange, Vararg{AbstractRange, N} where N}, ParallelUtilities.AbstractConstrainedProduct, Integer}" href="#ParallelUtilities.procrange_recast-Tuple{Tuple{AbstractRange, Vararg{AbstractRange, N} where N}, ParallelUtilities.AbstractConstrainedProduct, Integer}"><code>ParallelUtilities.procrange_recast</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">procrange_recast(iterators::Tuple{Vararg{AbstractRange}}, ps, np_new::Integer)</code></pre><p>Return the range of processor ranks that would contain the values in <code>ps</code> if the outer produce of the ranges in <code>iterators</code> is split across <code>np_new</code> workers.</p><p>The values contained in <code>ps</code> should be a subsection of the outer product of the ranges in <code>iterators</code>.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; iters = (1:10, 4:6, 1:4);
+
+julia&gt; ps = ParallelUtilities.ProductSplit(iters, 5, 2);
+
+julia&gt; ParallelUtilities.procrange_recast(iters, ps, 10)
+3:4</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL796-L815">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.whichproc-Tuple{Tuple{AbstractRange, Vararg{AbstractRange, N} where N}, Any, Integer}" href="#ParallelUtilities.whichproc-Tuple{Tuple{AbstractRange, Vararg{AbstractRange, N} where N}, Any, Integer}"><code>ParallelUtilities.whichproc</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">whichproc(iterators::Tuple{Vararg{AbstractRange}}, val::Tuple, np::Integer)</code></pre><p>Return the processor rank that will contain <code>val</code> if the outer product of the ranges contained in <code>iterators</code> is split evenly across <code>np</code> processors.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; iters = (1:4, 2:3);
+
+julia&gt; np = 2;
+
+julia&gt; ParallelUtilities.ProductSplit(iters, np, 2) |&gt; collect
+4-element Vector{Tuple{Int64, Int64}}:
+ (1, 3)
+ (2, 3)
+ (3, 3)
+ (4, 3)
+
+julia&gt; ParallelUtilities.whichproc(iters, (2, 3), np)
+2</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL735-L758">source</a></section></article><article class="docstring"><header><a class="docstring-binding" id="ParallelUtilities.whichproc_localindex-Tuple{Tuple{Vararg{AbstractRange, N} where N}, Tuple, Integer}" href="#ParallelUtilities.whichproc_localindex-Tuple{Tuple{Vararg{AbstractRange, N} where N}, Tuple, Integer}"><code>ParallelUtilities.whichproc_localindex</code></a> — <span class="docstring-category">Method</span></header><section><div><pre><code class="language-julia">whichproc_localindex(iterators::Tuple{Vararg{AbstractRange}}, val::Tuple, np::Integer)</code></pre><p>Return <code>(rank, ind)</code>, where <code>rank</code> is the rank of the worker that <code>val</code> will reside on if the outer product of the ranges in <code>iterators</code> is spread over <code>np</code> workers, and <code>ind</code> is the index of <code>val</code> in the local section on that worker.</p><p><strong>Examples</strong></p><pre><code class="language-julia-repl">julia&gt; iters = (1:4, 2:8);
+
+julia&gt; np = 10;
+
+julia&gt; ParallelUtilities.whichproc_localindex(iters, (2, 4), np)
+(4, 1)
+
+julia&gt; ParallelUtilities.ProductSplit(iters, np, 4) |&gt; collect
+3-element Vector{Tuple{Int64, Int64}}:
+ (2, 4)
+ (3, 4)
+ (4, 4)</code></pre></div><a class="docs-sourcelink" target="_blank" href="https://github.com/jishnub/ParallelUtilities.jl/blob/aa838b369498db23febbf777d990584c4a44b86d/src/productsplit.jl#LL883-L906">source</a></section></article></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../clusterquery/">« ClusterQueryUtils</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 0.27.3 on <span class="colophon-date" title="Sunday 11 July 2021 11:54">Sunday 11 July 2021</span>. Using Julia version 1.6.1.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

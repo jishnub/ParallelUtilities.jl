@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>SharedArrays · ParallelUtilities.jl</title><script data-outdated-warner src="../../assets/warner.js"></script><link rel="canonical" href="https://jishnub.github.io/ParallelUtilities.jl/examples/sharedarrays/"/><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.039/juliamono-regular.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.13.11/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">ParallelUtilities.jl</a></span></div><form class="docs-search" action="../../search/"><input class="docs-search-query" id="documenter-search-query" name="q" type="text" placeholder="Search docs"/></form><ul class="docs-menu"><li><a class="tocitem" href="../../">ParallelUtilities</a></li><li><a class="tocitem" href="../../pmapreduce/">Mapreduce</a></li><li><span class="tocitem">Examples</span><ul><li><a class="tocitem" href="../pmapreduce/">pmapreduce</a></li><li class="is-active"><a class="tocitem" href>SharedArrays</a></li><li><a class="tocitem" href="../threads/">Threads</a></li></ul></li><li><a class="tocitem" href="../../clusterquery/">ClusterQueryUtils</a></li><li><a class="tocitem" href="../../api/">Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Examples</a></li><li class="is-active"><a href>SharedArrays</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>SharedArrays</a></li></ul></nav><div class="docs-right"><a class="docs-edit-link" href="https://github.com/jishnub/ParallelUtilities.jl/blob/master/docs/src/examples/sharedarrays.md#L" title="Edit on GitHub"><span class="docs-icon fab"></span><span class="docs-label is-hidden-touch">Edit on GitHub</span></a><a class="docs-settings-button fas fa-cog" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-sidebar-button fa fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a></div></header><article class="content" id="documenter-page"><h1 id="Using-SharedArrays-in-a-parallel-mapreduce"><a class="docs-heading-anchor" href="#Using-SharedArrays-in-a-parallel-mapreduce">Using SharedArrays in a parallel mapreduce</a><a id="Using-SharedArrays-in-a-parallel-mapreduce-1"></a><a class="docs-heading-anchor-permalink" href="#Using-SharedArrays-in-a-parallel-mapreduce" title="Permalink"></a></h1><p>One might want to carry out a computation across several nodes of a cluster, where each node works on its own shared array. This may be achieved by using a <code>WorkerPool</code> that consists of one worker per node, which acts as a root process launching tasks on that node, and eventually returning the local array for an overall reduction across nodes.</p><p>We walk through one such example where we concatenate arrays that are locally initialized on each node.</p><p>We load the packages necessary, in this case these are <code>ParallelUtilities</code>, <code>SharedArrays</code> and <code>Distributed</code>.</p><pre><code class="language-julia">using ParallelUtilities
+using SharedArrays
+using Distributed</code></pre><p>We create a function to initailize the local part on each worker. In this case we simulate a heavy workload by adding a <code>sleep</code> period. In other words we assume that the individual elements of the array are expensive to evaluate. We obtain the local indices of the <code>SharedArray</code> through the function <code>localindices</code>.</p><pre><code class="language-julia">function initialize_localpart(s, sleeptime)
+    for ind in localindices(s)
+        sleep(sleeptime)
+        s[ind] = ind
+    end
+end</code></pre><p>We create a function that runs on the root worker on each node and feeds tasks to other workers on that node. We use the function <code>ParallelUtilities.workers_myhost()</code> to obtain a list of all workers on the same node. We create the <code>SharedArray</code> on these workers so that it is entirely contained on one machine. This is achieved by passing the keyword argument <code>pids</code> to the <code>SharedArray</code> constructor. We asynchronously spawn tasks to initialize the local parts of the shared array on each worker.</p><pre><code class="language-julia">function initializenode_sharedarray(sleeptime)
+    # obtain the workers on the local machine
+    pids = ParallelUtilities.workers_myhost()
+
+    # Create a shared array spread across the workers on that node
+    s = SharedArray{Int}((2_000,), pids = pids)
+
+    # spawn remote tasks to initialize the local part of the shared array
+    @sync for p in pids
+        @spawnat p initialize_localpart(s, sleeptime)
+    end
+    return sdata(s)
+end</code></pre><p>We create a main function that runs on the calling process and concatenates the arrays on each node. This is run on a <code>WorkerPool</code> consisting of one worker per node which acts as the root process. We may obtain such a pool through the function <code>ParallelUtilities.workerpool_nodes()</code>. Finally we call <code>pmapreduce</code> with a mapping function  that initializes an array on each node, which is followed by a concatenation across the nodes.</p><pre><code class="language-julia">function main_sharedarray(sleeptime)
+    # obtain the workerpool with one process on each node
+    pool = ParallelUtilities.workerpool_nodes()
+
+    # obtain the number of workers in the pool.
+    nw_node = nworkers(pool)
+
+    # Evaluate the parallel mapreduce
+    pmapreduce(x -&gt; initializenode_sharedarray(sleeptime), hcat, pool, 1:nw_node)
+end</code></pre><p>We compare the results with a serial execution that uses a similar workflow, except we use <code>Array</code> instead of <code>SharedArray</code> and <code>mapreduce</code> instead of <code>pmapreduce</code>.</p><pre><code class="language-julia">function initialize_serial(sleeptime)
+    pids = ParallelUtilities.workers_myhost()
+    s = Array{Int}(undef, 2_000)
+    for ind in eachindex(s)
+        sleep(sleeptime)
+        s[ind] = ind
+    end
+    return sdata(s)
+end
+
+function main_serial(sleeptime)
+    pool = ParallelUtilities.workerpool_nodes()
+    nw_node = nworkers(pool)
+    mapreduce(x -&gt; initialize_serial(sleeptime), hcat, 1:nw_node)
+end</code></pre><p>We create a function to compare the performance of the two. We start with a precompilation run with no sleep time, followed by recording the actual timings.</p><pre><code class="language-julia">function compare_with_serial()
+    # precompile
+    main_serial(0)
+    main_sharedarray(0)
+
+    # time
+    println(&quot;Testing serial&quot;)
+    A = @time main_serial(5e-3)
+    println(&quot;Testing sharedarray&quot;)
+    B = @time main_sharedarray(5e-3)
+
+    println(&quot;Results match : &quot;, A == B)
+end</code></pre><p>We run this script on a Slurm cluster across 2 nodes with 28 cores on each node. The results are:</p><pre><code class="language-julia">julia&gt; compare_with_serial()
+Testing serial
+ 24.624912 seconds (27.31 k allocations: 1.017 MiB)
+Testing sharedarray
+  1.077752 seconds (4.60 k allocations: 246.281 KiB)
+Results match : true</code></pre><p>The full script may be found in the examples directory.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../pmapreduce/">« pmapreduce</a><a class="docs-footer-nextpage" href="../threads/">Threads »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 0.27.3 on <span class="colophon-date" title="Sunday 11 July 2021 11:54">Sunday 11 July 2021</span>. Using Julia version 1.6.1.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
