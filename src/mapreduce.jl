@@ -37,10 +37,7 @@ getiterators(h::Hold) = getiterators(h.iterators)
 
 Base.length(h::Hold) = length(h.iterators)
 
-check_knownsize(iterators::Tuple) = _check_knownsize(first(iterators)) & check_knownsize(Base.tail(iterators))
-check_knownsize(::Tuple{}) = true
-check_knownsize(iterators) = _check_knownsize(iterators)
-function _check_knownsize(iterator)
+function check_knownsize(iterator)
     itsz = Base.IteratorSize(iterator)
     itsz isa Base.HasLength || itsz isa Base.HasShape
 end
