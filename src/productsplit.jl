@@ -217,6 +217,21 @@ Base.lastindex(ps::AbstractConstrainedProduct) = lastindexglobal(ps) - firstinde
 firstindexglobal(ps::AbstractConstrainedProduct) = ProductSection(ps).firstind
 lastindexglobal(ps::AbstractConstrainedProduct) = ProductSection(ps).lastind
 
+# SplittablesBase interface
+function SplittablesBase.halve(ps::AbstractConstrainedProduct)
+    iter = getiterators(ps)
+    firstind = firstindexglobal(ps)
+    lastind = lastindexglobal(ps)
+    nleft = length(ps) ÷ 2
+    firstindleft = firstind
+    lastindleft = firstind + nleft - 1
+    firstindright = lastindleft + 1
+    lastindright = lastind
+    tl = togglelevels(ps)
+    ProductSection(iter, tl, firstindleft, lastindleft),
+    ProductSection(iter, tl, firstindright, lastindright)
+end
+
 """
     childindex(ps::AbstractConstrainedProduct, ind)
 

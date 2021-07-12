@@ -9,7 +9,11 @@ ProductSplit, SegmentedOrderedBinaryTree
 import ParallelUtilities.ClusterQueryUtils: chooseworkers
 
 @testset "Project quality" begin
-    Aqua.test_all(ParallelUtilities)
+    if VERSION < v"1.6.0"
+        Aqua.test_all(ParallelUtilities, ambiguities=false)
+    else
+        Aqua.test_all(ParallelUtilities)
+    end
 end
 
 DocMeta.setdocmeta!(ParallelUtilities, :DocTestSetup, :(using ParallelUtilities); recursive=true)

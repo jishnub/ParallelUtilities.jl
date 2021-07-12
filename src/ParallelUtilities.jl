@@ -1,6 +1,7 @@
 module ParallelUtilities
 
 using Distributed
+using SplittablesBase
 
 export pmapreduce
 export pmapreduce_productsplit

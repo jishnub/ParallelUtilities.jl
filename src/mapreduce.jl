@@ -37,21 +37,44 @@ getiterators(h::Hold) = getiterators(h.iterators)
 
 Base.length(h::Hold) = length(h.iterators)
 
-check_knownsize(iterators::Tuple) = _check_knownsize(first(iterators)) & check_knownsize(Base.tail(iterators))
-check_knownsize(::Tuple{}) = true
-function _check_knownsize(iterator)
+function check_knownsize(iterator)
     itsz = Base.IteratorSize(iterator)
     itsz isa Base.HasLength || itsz isa Base.HasShape
 end
 
-function zipsplit(iterators::Tuple, np::Integer, p::Integer)
-    check_knownsize(iterators)
-    itzip = zip(iterators...)
+struct ZipSplit{Z, I}
+    z :: Z
+    it :: I
+    skip :: Int
+    N :: Int
+end
+
+# This constructor differs from zipsplit, as it uses skipped and retained elements
+# and not p and np. This type is added to increase compatibility with SplittablesBase
+function ZipSplit(itzip, skipped_elements::Integer, elements_on_proc::Integer)
+    it = Iterators.take(Iterators.drop(itzip, skipped_elements), elements_on_proc)
+    ZipSplit{typeof(itzip), typeof(it)}(itzip, it, skipped_elements, elements_on_proc)
+end
+
+Base.length(zs::ZipSplit) = length(zs.it)
+Base.eltype(zs::ZipSplit) = eltype(zs.it)
+Base.iterate(z::ZipSplit, i...) = iterate(takedrop(z), i...)
+takedrop(zs::ZipSplit) = zs.it
+
+function SplittablesBase.halve(zs::ZipSplit)
+    nleft = zs.N ÷ 2
+    ZipSplit(zs.z, zs.skip, nleft), ZipSplit(zs.z, zs.skip + nleft, zs.N - nleft)
+end
+
+zipsplit(iterators::Tuple, np::Integer, p::Integer) = zipsplit(zip(iterators...), np, p)
+
+function zipsplit(itzip::Iterators.Zip, np::Integer, p::Integer)
+    check_knownsize(itzip)
     d,r = divrem(length(itzip), np)
     skipped_elements = d*(p-1) + min(r,p-1)
     lastind = d*p + min(r,p)
     elements_on_proc = lastind - skipped_elements
-    Iterators.take(Iterators.drop(itzip, skipped_elements), elements_on_proc)
+    ZipSplit(itzip, skipped_elements, elements_on_proc)
 end
 
 _split_iterators(iterators, np, p) = (zipsplit(iterators, np, p),)

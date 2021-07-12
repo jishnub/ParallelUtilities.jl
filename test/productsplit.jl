@@ -1,10 +1,11 @@
 using Distributed
 using Test
 using ParallelUtilities
-import ParallelUtilities: ProductSplit, ProductSection,
+import ParallelUtilities: ProductSplit, ProductSection, ZipSplit, zipsplit,
 minimumelement, maximumelement, extremaelement, nelements, dropleading, indexinproduct,
 extremadims, localindex, extrema_commonlastdim, whichproc, procrange_recast, whichproc_localindex,
 getiterators, _niterators
+using SplittablesBase
 
 macro testsetwithinfo(str, ex)
     quote
@@ -423,6 +424,17 @@ end
         @test nelements(ps, dims = 3) == 1
     end
 
+    @testset "SplittablesBase" begin
+        for iters in [(1:4, 1:3), (1:4, 1:4)]
+            for ps = Any[ProductSplit(iters, 3, 2), ProductSection(iters, 3:8)]
+                l, r = SplittablesBase.halve(ps)
+                lc, rc = SplittablesBase.halve(collect(ps))
+                @test collect(l) == lc
+                @test collect(r) == rc
+            end
+        end
+    end
+
     @test ParallelUtilities._checknorollover((), (), ())
 end;
 
@@ -453,3 +465,14 @@ end;
         @test a <= b
     end
 end;
+
+@testset "ZipSplit" begin
+    @testset "SplittablesBase" begin
+        for ps in [zipsplit((1:4, 1:4), 3, 2), zipsplit((1:5, 1:5), 3, 2)]
+            l, r = SplittablesBase.halve(ps)
+            lc, rc = SplittablesBase.halve(collect(ps))
+            @test collect(l) == lc
+            @test collect(r) == rc
+        end
+    end
+end

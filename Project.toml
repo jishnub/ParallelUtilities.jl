@@ -1,14 +1,16 @@
 name = "ParallelUtilities"
 uuid = "fad6cfc8-4f83-11e9-06cc-151124046ad0"
 authors = ["Jishnu Bhattacharya"]
-version = "0.8.5"
+version = "0.8.6"
 
 [deps]
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
+SplittablesBase = "171d559e-b47b-412a-8079-5efa626c420e"
 
 [compat]
 DataStructures = "0.17, 0.18"
+SplittablesBase = "0.1"
 julia = "1.2"
 
 [extras]
