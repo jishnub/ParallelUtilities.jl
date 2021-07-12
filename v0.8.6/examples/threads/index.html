@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Threads · ParallelUtilities.jl</title><script data-outdated-warner src="../../assets/warner.js"></script><link rel="canonical" href="https://jishnub.github.io/ParallelUtilities.jl/examples/threads/"/><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.039/juliamono-regular.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.13.11/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">ParallelUtilities.jl</a></span></div><form class="docs-search" action="../../search/"><input class="docs-search-query" id="documenter-search-query" name="q" type="text" placeholder="Search docs"/></form><ul class="docs-menu"><li><a class="tocitem" href="../../">ParallelUtilities</a></li><li><a class="tocitem" href="../../pmapreduce/">Mapreduce</a></li><li><span class="tocitem">Examples</span><ul><li><a class="tocitem" href="../pmapreduce/">pmapreduce</a></li><li><a class="tocitem" href="../sharedarrays/">SharedArrays</a></li><li class="is-active"><a class="tocitem" href>Threads</a></li></ul></li><li><a class="tocitem" href="../../clusterquery/">ClusterQueryUtils</a></li><li><a class="tocitem" href="../../api/">Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Examples</a></li><li class="is-active"><a href>Threads</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Threads</a></li></ul></nav><div class="docs-right"><a class="docs-edit-link" href="https://github.com/jishnub/ParallelUtilities.jl/blob/master/docs/src/examples/threads.md#L" title="Edit on GitHub"><span class="docs-icon fab"></span><span class="docs-label is-hidden-touch">Edit on GitHub</span></a><a class="docs-settings-button fas fa-cog" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-sidebar-button fa fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a></div></header><article class="content" id="documenter-page"><h1 id="Using-Threads-in-a-parallel-mapreduce"><a class="docs-heading-anchor" href="#Using-Threads-in-a-parallel-mapreduce">Using Threads in a parallel mapreduce</a><a id="Using-Threads-in-a-parallel-mapreduce-1"></a><a class="docs-heading-anchor-permalink" href="#Using-Threads-in-a-parallel-mapreduce" title="Permalink"></a></h1><p>One might want to carry out a computation across several nodes of a cluster, where each node uses multithreading to evaluate a result that is subsequently reduced across all nodes. We walk through one such example where we concatenate arrays that are locally initialized on each node using threads.</p><p>We load the packages necessary, in this case these are <code>ParallelUtilities</code> and <code>Distributed</code>.</p><pre><code class="language-julia">using ParallelUtilities
+using Distributed</code></pre><p>We create a function to initailize the local part on each worker. In this case we simulate a heavy workload by adding a <code>sleep</code> period. In other words we assume that the individual elements of the array are expensive to evaluate. We use <code>Threads.@threads</code> to split up the loop into sections that are processed on invidual threads.</p><pre><code class="language-julia">function initializenode_threads(sleeptime)
+    s = zeros(Int, 2_000)
+    Threads.@threads for ind in eachindex(s)
+        sleep(sleeptime)
+        s[ind] = ind
+    end
+    return s
+end</code></pre><p>We create a main function that runs on the calling process and launches the array initialization task on each node. This is run on a <code>WorkerPool</code> consisting of one worker per node which acts as the root process. We may obtain such a pool through the function <code>ParallelUtilities.workerpool_nodes()</code>. The array creation step on each node is followed by an eventual concatenation.</p><pre><code class="language-julia">function main_threads(sleeptime)
+    # obtain the workerpool with one process on each node
+    pool = ParallelUtilities.workerpool_nodes()
+
+    # obtain the number of workers in the pool.
+    nw_nodes = nworkers(pool)
+
+    # Evaluate the parallel mapreduce
+    pmapreduce(x -&gt; initializenode_threads(sleeptime), hcat, pool, 1:nw_nodes)
+end</code></pre><p>We compare the results with a serial execution that uses a similar workflow, except we use <code>mapreduce</code> instead of <code>pmapreduce</code> and do not use threads.</p><pre><code class="language-julia">function initialize_serial(sleeptime)
+    s = zeros(Int, 2_000)
+    for ind in eachindex(s)
+        sleep(sleeptime)
+        s[ind] = ind
+    end
+    return s
+end
+
+function main_serial(sleeptime)
+    pool = ParallelUtilities.workerpool_nodes()
+    nw_nodes = nworkers(pool)
+    mapreduce(x -&gt; initialize_serial(sleeptime), hcat, 1:nw_nodes)
+end</code></pre><p>We create a function to compare the performance of the two. We start with a precompilation run with no sleep time, followed by recording the actual timings with a sleep time of 5 milliseconds for each index of the array.</p><pre><code class="language-julia">function compare_with_serial()
+    # precompile
+    main_serial(0)
+    main_threads(0)
+
+    # time
+    println(&quot;Testing serial&quot;)
+    A = @time main_serial(5e-3);
+    println(&quot;Testing threads&quot;)
+    B = @time main_threads(5e-3);
+
+    println(&quot;Results match : &quot;, A == B)
+end</code></pre><p>We run this script on a Slurm cluster across 2 nodes with 28 cores on each node. The results are:</p><pre><code class="language-julia">julia&gt; compare_with_serial()
+Testing serial
+ 24.601593 seconds (22.49 k allocations: 808.266 KiB)
+Testing threads
+  0.666256 seconds (3.71 k allocations: 201.703 KiB)
+Results match : true</code></pre><p>The full script may be found in the examples directory.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../sharedarrays/">« SharedArrays</a><a class="docs-footer-nextpage" href="../../clusterquery/">ClusterQueryUtils »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 0.27.3 on <span class="colophon-date" title="Monday 12 July 2021 18:08">Monday 12 July 2021</span>. Using Julia version 1.6.1.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
