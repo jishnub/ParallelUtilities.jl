@@ -1,7 +1,7 @@
 name = "ParallelUtilities"
 uuid = "fad6cfc8-4f83-11e9-06cc-151124046ad0"
 authors = ["Jishnu Bhattacharya"]
-version = "0.8.6"
+version = "0.8.7"
 
 [deps]
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"

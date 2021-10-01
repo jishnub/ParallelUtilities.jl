@@ -340,3 +340,35 @@ function pmapbatch_productsplit(f, iterators...)
     pool = maybetrimmedworkerpool(workers(), N)
     pmapbatch_productsplit(f, pool, iterators...)
 end
+
+"""
+    pmapnodes(f, [pool::AbstractWorkerPool], iterators...)
+
+Carry out a `pmap` over `iterators` divided among available workers, choosing one worker from each
+machine/node of a cluster. If only one machine/node is present, this is effectively a serial evaluation.
+"""
+function pmapnodes(f, pool::AbstractWorkerPool, iterators...)
+    pool = workerpool_nodes(pool)
+    pmap(f, pool, iterators...)
+end
+pmapnodes(f, iterators...) = pmapnodes(f, WorkerPool(workers()), iterators...)
+
+"""
+    pmap_threadscoop(f, [pool::AbstractWorkerPool], nthreads::Integer, iterators...)
+
+Carry out a `pmap` over `iterators` divided evenly among available workers,
+such that each worker may launch `nthreads` threads cooperatively with other local workers.
+
+!!! note
+    This function does not use threading, it only distributes the load across an appropriate number
+    of processes such that the function `f` may use `nthreads` threads on each process without eating
+    into the resources available to the other workers. The job to actually use threads is left to `f`.
+"""
+function pmap_threadscoop(f, pool::AbstractWorkerPool, nthreads::Integer, iterators...)
+    N = length(product(iterators...))
+    pool = workerpool_threadscoop(nthreads, pool)
+    pool_trimmed = maybetrimmedworkerpool(pool, N)
+    pmap(f, pool_trimmed, iterators...)
+end
+pmap_threadscoop(f, nthreads::Integer, iterators...) =
+    pmap_threadscoop(f, WorkerPool(workers()), nthreads::Integer, iterators...)

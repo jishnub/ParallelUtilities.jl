@@ -5,7 +5,6 @@ using Distributed
     using Test
     using ParallelUtilities
     using ParallelUtilities.ClusterQueryUtils
-    using ParallelUtilities.ClusterQueryUtils: oneworkerpernode
     using OffsetArrays
     import ParallelUtilities: BinaryTreeNode, BranchChannel,
     OrderedBinaryTree, SegmentedOrderedBinaryTree,
@@ -675,6 +674,11 @@ end
         v = pmapbatch_productsplit(x -> ParallelUtilities.workerrank(x), 1:nworkers(), 1:nworkers())
         @test v == [1:nworkers();]
     end
+    @testset "pmapnodes/pmap_threadscoop" begin
+        r = pmap(x -> x^2, 1:4)
+        @test ParallelUtilities.pmapnodes(x -> x^2, 1:4) == r
+        @test ParallelUtilities.pmap_threadscoop(x -> x^2, 2, 1:4) == r
+    end
 end;
 
 @testset "ClusterQueryUtils" begin
@@ -690,14 +694,55 @@ end;
         @test length(w) == 1
         @test (@fetchfrom w[1] Libc.gethostname()) == myhost
 
-        pool = workerpool_nodes(WorkerPool(w_myhost))
-        w_pool = workers(pool)
-        @test length(w_pool) == 1
-        @test (@fetchfrom w_pool[1] Libc.gethostname()) == myhost
+        @testset "workerpool_nodes myhost" begin
+            pool = workerpool_nodes(WorkerPool(w_myhost))
+            @test pool isa WorkerPool
+            w_pool = workers(pool)
+            @test length(w_pool) == 1
+            @test (@fetchfrom w_pool[1] Libc.gethostname()) == myhost
+
+            pool = workerpool_nodes(WorkerPool(w_myhost), CachingPool)
+            @test pool isa CachingPool
+            w_pool = workers(pool)
+            @test length(w_pool) == 1
+            @test (@fetchfrom w_pool[1] Libc.gethostname()) == myhost
+
+            pool = workerpool_nodes(w_myhost, CachingPool)
+            @test pool isa CachingPool
+            w_pool = workers(pool)
+            @test length(w_pool) == 1
+            @test (@fetchfrom w_pool[1] Libc.gethostname()) == myhost
+        end
+
+        @testset "workerpool_threadscoop myhost" begin
+            pool = workerpool_threadscoop(2, w_myhost)
+            w_pool = workers(pool)
+            @test length(w_pool) == max(1, length(w_myhost) ÷ 2)
+            @test all([(@fetchfrom w Libc.gethostname()) for w in w_pool] .== myhost)
+
+            pool = workerpool_threadscoop(2, w_myhost, CachingPool)
+            @test pool isa CachingPool
+            w_pool = workers(pool)
+            @test length(w_pool) == max(1, length(w_myhost) ÷ 2)
+            @test all([(@fetchfrom w Libc.gethostname()) for w in w_pool] .== myhost)
+        end
     end
 
-    w = workers(workerpool_nodes())
-    @test !isempty(w)
-    host_w = @fetchfrom w[1] Libc.gethostname()
-    @test w[1] in p[host_w]
+    @testset "workerpool_nodes" begin
+        w = workers(workerpool_nodes())
+        @test !isempty(w)
+        host_w = @fetchfrom w[1] Libc.gethostname()
+        @test w[1] in p[host_w]
+    end
+
+    @testset "workerpool_threadscoop" begin
+        pool = workerpool_threadscoop(2)
+        w_pool = workers(pool)
+        @test length(w_pool) == max(1, length(workers()) ÷ 2)
+
+        pool = workerpool_nodes(CachingPool)
+        @test pool isa CachingPool
+        w_pool = workers(pool)
+        @test length(w_pool) == length(p)
+    end
 end

@@ -10,8 +10,13 @@ export nprocs_node
 export workersactive
 export chooseworkers
 export maybetrimmedworkerpool
+export oneworkerpernode
 export workerpool_nodes
+export workerpool_threadscoop
+export workerspernode
+export workerspernode_threadscoop
 export workers_myhost
+export @everynode
 
 """
     hostnames([procs = workers()])
@@ -111,29 +116,99 @@ function chooseworkers(workerspool, n::Integer, workers_on_hosts::AbstractDict =
     end
 end
 
-function maybetrimmedworkerpool(workers, N)
+function maybetrimmedworkerpool(workers::AbstractVector{<:Integer}, N)
     w = chooseworkers(workers, N)
     WorkerPool(w)
 end
 
-"""
-    workerpool_nodes([pool::AbstractWorkerPool = WorkerPool(workers())])
+function maybetrimmedworkerpool(pool::AbstractWorkerPool, N)
+    pool_trimmed = maybetrimmedworkerpool(workers(pool), N)
+    typeof(pool)(workers(pool_trimmed))
+end
 
-Return a `WorkerPool` with one worker per machine/node of the cluster.
 """
-workerpool_nodes(pool::AbstractWorkerPool) = WorkerPool(oneworkerpernode(workers(pool)))
-workerpool_nodes() = WorkerPool(oneworkerpernode(workers()))
+    workerpool_nodes([pool::AbstractWorkerPool = WorkerPool(workers())], [T::Type{<:AbstractWorkerPool} = WorkerPool])
+
+Return an `AbstractWorkerPool` of type `T` with one worker per machine/node of the cluster.
+"""
+workerpool_nodes(w::AbstractVector{<:Integer}, T::Type{<:AbstractWorkerPool} = WorkerPool) =
+    T(oneworkerpernode(w))
+workerpool_nodes(pool::AbstractWorkerPool, T::Type{<:AbstractWorkerPool} = typeof(pool)) =
+    workerpool_nodes(workers(pool), T)
+workerpool_nodes(T::Type{<:AbstractWorkerPool} = WorkerPool) =
+    workerpool_nodes(workers(), T)
 
 """
     oneworkerpernode([workers::AbstractVector{<:Integer} = workers()])
+    oneworkerpernode(pool::AbstractWorkerPool)
 
-Return a subsample of workers such that each `pid` in the returned vector is located on
+Return a subsample of `workers` such that each `pid` in the returned vector is located on
 one machine/node of the cluster.
 """
-function oneworkerpernode(workers::AbstractVector{<:Integer} = workers())
+oneworkerpernode(workers::AbstractVector{<:Integer} = workers()) = workerspernode(1, workers)
+oneworkerpernode(pool::AbstractWorkerPool) = oneworkerpernode(workers(pool))
+
+"""
+    workerspernode(n::Integer, [workers::AbstractVector{<:Integer} = workers()])
+    workerspernode(n::Integer, pool::AbstractWorkerPool)
+
+Return a subsample of `workers` such that there are at most `n` workers on each machine/node
+of the cluster.
+
+    workerspernode(nw::AbstractVector{<:Integer}, workers::AbstractVector{<:Integer} = workers())
+
+Return a subsample of `workers` such that there are at most `nw[i]` workers on the `i`th machine/node
+of the cluster.
+"""
+function workerspernode(n::Integer, workers::AbstractVector{<:Integer} = workers())
     workers_on_hosts = procs_node(workers)
-    [first(v) for v in values(workers_on_hosts)]
+    reduce(vcat, [v[1:min(n, lastindex(v))] for v in values(workers_on_hosts)])
 end
+function workerspernode(nw_node::AbstractVector{<:Integer}, workers::AbstractVector{<:Integer} = workers())
+    workers_on_hosts = procs_node(workers)
+    length(nw_node) == length(keys(workers_on_hosts)) ||
+        throw(ArgumentError("length of workers per host must match the number of hosts"))
+    p = [v[1:min(nw, lastindex(v))] for (nw, v) in zip(nw_node, values(workers_on_hosts))]
+    reduce(vcat, p)
+end
+workerspernode(n, pool::AbstractWorkerPool) = workerspernode(n, workers(pool))
+
+
+"""
+    workerpool_threadscoop(nthreads::Integer, [pool::AbstractWorkerPool = WorkerPool(workers())], [T::Type{<:AbstractWorkerPool} = WorkerPool])
+
+Return an `AbstractWorkerPool` of type `T` with a subsample of workers from `workers(pool)` such that
+each worker on each machine/node of the cluster may spawn `nthreads` threads cooperatively with other
+local workers. If the number of workers available is `nthreads × m` on a node then this returns `m`
+workers on that node.
+
+See also: [`workerspernode_threadscoop`](@ref)
+"""
+workerpool_threadscoop(nthreads::Integer, w::AbstractVector{<:Integer}, T::Type{<:AbstractWorkerPool} = WorkerPool) =
+    T(workerspernode_threadscoop(nthreads, w))
+workerpool_threadscoop(nthreads::Integer, pool::AbstractWorkerPool, T::Type{<:AbstractWorkerPool} = typeof(pool)) =
+    workerpool_threadscoop(nthreads, workers(pool), T)
+workerpool_threadscoop(nthreads::Integer, T::Type{<:AbstractWorkerPool} = WorkerPool) =
+    workerpool_threadscoop(nthreads, workers(), T)
+
+"""
+    workerspernode_threadscoop(nthreads::Integer, [workers::AbstractVector{<:Integer} = workers()])
+    workerspernode_threadscoop(nthreads::Integer, pool::AbstractWorkerPool)
+
+Return a subsample of `workers` such that each workers on a machine/node of the cluster
+may spawn `nthreads` threads cooperatively with other local workers.
+If the number of workers available is `nthreads × m` on a node then this returns `m`
+workers on that node.
+
+See also: [`workerpool_threadscoop`](@ref)
+"""
+function workerspernode_threadscoop(nthreads::Integer, workers::AbstractVector{<:Integer} = workers())
+    workers_on_hosts = procs_node(workers)
+    nw_node = [max(1, length(v) ÷ nthreads) for v in values(workers_on_hosts)]
+    workerspernode(nw_node, workers)
+end
+workerspernode_threadscoop(nthreads::Integer, pool::AbstractWorkerPool) =
+    workerspernode_nthreads(nthreads, workers(pool))
 
 """
     workers_myhost([workers::AbstractVector{<:Integer} = workers()])
@@ -142,5 +217,25 @@ Return a list of all workers that are on the local machine/node of the cluster.
 """
 workers_myhost(workers::AbstractVector{<:Integer} = workers()) = procs_node(workers)[Libc.gethostname()]
 workers_myhost(pool::AbstractWorkerPool) = workers_myhost(workers(pool))
+
+"""
+    @everynode [procs()] expr
+
+Evaluate an expression `expr` on one worker on each machine/node of the cluster.
+This is complementary to `Distributed.@everywhere` that evaluates a function on each process.
+The process on which `expr` is evaluated on any node is arbitrary, and should not be relied upon.
+"""
+macro everynode(procs, ex)
+    quote
+        pool = workerpool_nodes(procs)
+        @everywhere workers(pool) $ex
+    end
+end
+macro everynode(ex)
+    quote
+        pool = workerpool_nodes(procs())
+        @everywhere workers(pool) $ex
+    end
+end
 
 end
