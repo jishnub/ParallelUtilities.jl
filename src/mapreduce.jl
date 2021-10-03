@@ -268,7 +268,7 @@ function pmapreduce(f, op, pool::AbstractWorkerPool, iterators...; reducekw...)
 
     if N <= 1 || nworkers(pool) == 1
         iterable_on_proc = _split_iterators(iterators, 1, 1)
-        fmap = _maybesplat(f)
+        fmap = _maybesplat(getf(f))
         if nprocs() == 1 # no workers added
             return _mapreduce(fmap, op, iterable_on_proc...; reducekw...)
         else # one worker or single-valued iterator
@@ -276,8 +276,9 @@ function pmapreduce(f, op, pool::AbstractWorkerPool, iterators...; reducekw...)
         end
     end
 
-    tree_branches = createbranchchannels(pool, N)
-    pmapreduceworkers(f, op, tree_branches, iterators; reducekw...)
+    pool_maybethreads = maybetrimmedworkerpool(pool, Threaded(f))
+    tree_branches = createbranchchannels(pool_maybethreads, N)
+    pmapreduceworkers(getf(f), op, tree_branches, iterators; reducekw...)
 end
 
 function pmapreduce(f, op, iterators...; reducekw...)
@@ -347,28 +348,88 @@ end
 Carry out a `pmap` over `iterators` divided among available workers, choosing one worker from each
 machine/node of a cluster. If only one machine/node is present, this is effectively a serial evaluation.
 """
-function pmapnodes(f, pool::AbstractWorkerPool, iterators...)
+function pmapnodes(f, pool::AbstractWorkerPool, iterators...; kwargs...)
     pool = workerpool_nodes(pool)
-    pmap(f, pool, iterators...)
+    pmap(f, pool, iterators...; kwargs...)
 end
-pmapnodes(f, iterators...) = pmapnodes(f, WorkerPool(workers()), iterators...)
-
-"""
-    pmap_threadscoop(f, [pool::AbstractWorkerPool], nthreads::Integer, iterators...)
-
-Carry out a `pmap` over `iterators` divided evenly among available workers,
-such that each worker may launch `nthreads` threads cooperatively with other local workers.
-
-!!! note
-    This function does not use threading, it only distributes the load across an appropriate number
-    of processes such that the function `f` may use `nthreads` threads on each process without eating
-    into the resources available to the other workers. The job to actually use threads is left to `f`.
-"""
-function pmap_threadscoop(f, pool::AbstractWorkerPool, nthreads::Integer, iterators...)
+function pmapnodes(f, iterators...; kwargs...)
     N = length(product(iterators...))
-    pool = workerpool_threadscoop(nthreads, pool)
-    pool_trimmed = maybetrimmedworkerpool(pool, N)
-    pmap(f, pool_trimmed, iterators...)
+    pool = maybetrimmedworkerpool(workers(), N)
+    pmapnodes(f, pool, iterators...; kwargs...)
 end
-pmap_threadscoop(f, nthreads::Integer, iterators...) =
-    pmap_threadscoop(f, WorkerPool(workers()), nthreads::Integer, iterators...)
+
+struct Threaded{F}
+    f :: F
+    nthreads :: Int
+
+    Threaded(f::F, nthreads::Integer) where {F} = begin
+        @assert nthreads >= 1 "number of threads must be positive"
+        new{F}(f, Int(nthreads))
+    end
+end
+
+getf(t::Threaded) = t.f
+getf(f) = f
+Threaded(f) = Threaded(f, 1)
+Threaded(f::Threaded) = f
+Threaded(f::Threaded, n::Integer) = Threaded(getf(f), max(f.nthreads, n))
+
+(f::Threaded)(args...; kwargs...) = getf(f)(args...; kwargs...)
+
+ClusterQueryUtils.maybetrimmedworkerpool(pool::AbstractWorkerPool, t::Threaded) =
+    t.nthreads == 1 ? pool : workerpool_threadedfn(t.nthreads, pool)
+
+function Distributed.pmap(f::Threaded, pool::AbstractWorkerPool, iterators...; kwargs...)
+    pool = maybetrimmedworkerpool(pool, f)
+    pmap(getf(f), pool, iterators...; kwargs...)
+end
+function Distributed.pmap(f::Threaded, iterators...; kwargs...)
+    N = length(product(iterators...))
+    pool = maybetrimmedworkerpool(workers(), N)
+    pmap(f, pool, iterators...; kwargs...)
+end
+
+"""
+    pmap_threadedfn(f, nthreads, [pool::AbstractWorkerPool], iterators...; kwargs...)
+
+Carry out a [`pmap`](@ref) over `iterators` divided evenly among available workers,
+such that each worker may launch `nthreads` threads cooperatively with other local workers.
+"""
+pmap_threadedfn
+
+"""
+    pmapreduce_threadedfn(f, nthreads, op, [pool::AbstractWorkerPool], iterators...; kwargs...)
+
+Carry out a [`pmapreduce`](@ref) over `iterators` divided evenly among available workers,
+such that each worker may launch `nthreads` threads cooperatively with other local workers.
+"""
+pmapreduce_threadedfn
+
+"""
+    pmapreduce_productsplit_threadedfn(f, nthreads, op, [pool::AbstractWorkerPool], iterators...; kwargs...)
+
+Carry out a [`pmapreduce_productsplit`](@ref) over `iterators` divided evenly among available workers,
+such that each worker may launch `nthreads` threads cooperatively with other local workers.
+"""
+pmapreduce_productsplit_threadedfn
+
+"""
+    pmapbatch_threadedfn(f, nthreads, op, [pool::AbstractWorkerPool], iterators...; kwargs...)
+
+Carry out a [`pmapbatch`](@ref) over `iterators` divided evenly among available workers,
+such that each worker may launch `nthreads` threads cooperatively with other local workers.
+"""
+pmapbatch_threadedfn
+
+"""
+    pmapbatch_productsplit_threadedfn(f, nthreads, op, [pool::AbstractWorkerPool], iterators...; kwargs...)
+
+Carry out a [`pmapbatch_productsplit`](@ref) over `iterators` divided evenly among available workers,
+such that each worker may launch `nthreads` threads cooperatively with other local workers.
+"""
+pmapbatch_productsplit_threadedfn
+
+for pfn in [:pmap, :pmapreduce, :pmapreduce_productsplit, :pmapbatch, :pmapbatch_productsplit]
+    pfn_threadedfn = Symbol(pfn, :_threadedfn)
+    @eval $pfn_threadedfn(f, nthreads, args...; kwargs...) = $pfn(Threaded(f, nthreads), args...; kwargs...)
+end

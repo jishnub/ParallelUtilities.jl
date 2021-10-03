@@ -2,6 +2,7 @@ using Distributed
 
 @everywhere begin
     using DataStructures
+    using LinearAlgebra
     using Test
     using ParallelUtilities
     using ParallelUtilities.ClusterQueryUtils
@@ -13,7 +14,8 @@ using Distributed
     workersactive,
     leafrankfoldedtree,
     TopTreeNode, SubTreeNode,
-    NoSplat, reducedvalue
+    NoSplat, reducedvalue, Threaded,
+    pmap_threadedfn, pmapreduce_threadedfn
 
     function parentnoderank(tree::SegmentedOrderedBinaryTree, i::Integer)
         1 <= i <= length(tree) || throw(BoundsError(tree, i))
@@ -674,12 +676,58 @@ end
         v = pmapbatch_productsplit(x -> ParallelUtilities.workerrank(x), 1:nworkers(), 1:nworkers())
         @test v == [1:nworkers();]
     end
-    @testset "pmapnodes/pmap_threadscoop" begin
-        r = pmap(x -> x^2, 1:4)
-        @test ParallelUtilities.pmapnodes(x -> x^2, 1:4) == r
-        @test ParallelUtilities.pmap_threadscoop(x -> x^2, 2, 1:4) == r
-    end
 end;
+
+@testset "pmapnodes" begin
+    r = 1:10
+    res = pmap(x -> x^2, r)
+    @test ParallelUtilities.pmapnodes(x -> x^2, r) == res
+end
+
+@testset "threaded pmap/pmapreduce" begin
+    r = 1:10
+    @testset "test with non-threaded function" begin
+        f = x -> x^2
+        @testset "pmap" begin
+            res = pmap(f, r)
+            @test pmap(Threaded(f), r) == res
+            @test pmap(Threaded(f, 2), r) == res
+            @test pmap(Threaded(Threaded(f), 2), r) == res
+            @test pmap_threadedfn(f, 1, r) == res
+            @test pmap_threadedfn(f, 2, r) == res
+            @test pmap_threadedfn(Threaded(f), 2, r) == res
+        end
+
+        @testset "pmapreduce" begin
+            res = pmapreduce(f, vcat, r)
+            @test pmapreduce(Threaded(f), vcat, r) == res
+            @test pmapreduce(Threaded(f, 2), vcat, r) == res
+            @test pmapreduce(Threaded(Threaded(f), 2), vcat, r) == res
+            @test pmapreduce_threadedfn(f, 1, vcat, r) == res
+            @test pmapreduce_threadedfn(f, 2, vcat, r) == res
+            @test pmapreduce_threadedfn(Threaded(f), 2,  vcat, r) == res
+        end
+    end
+    @testset "threaded function" begin
+        function g(nthreads = 1)
+            BLAS.set_num_threads(nthreads)
+            M = collect(reshape(1:16, 4, 4))
+            eigvals(M)
+        end
+        @testset "pmap" begin
+            res = pmap(_ -> g(), r)
+            @test pmap_threadedfn(_ -> g(1), 1, r) == res
+            @test pmap_threadedfn(_ -> g(2), 2, r) == res
+            @test pmap_threadedfn(_ -> g(4), 4, r) == res
+        end
+        @testset "pmapreduce" begin
+            res = pmapreduce(_ -> g(), vcat, r)
+            @test pmapreduce_threadedfn(_ -> g(1), 1, vcat, r) == res
+            @test pmapreduce_threadedfn(_ -> g(2), 2, vcat, r) == res
+            @test pmapreduce_threadedfn(_ -> g(4), 4, vcat, r) == res
+        end
+    end
+end
 
 @testset "ClusterQueryUtils" begin
     # These tests assume that all the workers are on the same node
@@ -690,9 +738,13 @@ end;
         @test sort(workers_myhost(w_myhost)) == sort(w_myhost)
         @test sort(workers_myhost(WorkerPool(w_myhost))) == sort(w_myhost)
 
-        w = oneworkerpernode(w_myhost)
-        @test length(w) == 1
-        @test (@fetchfrom w[1] Libc.gethostname()) == myhost
+        @testset "oneworkerpernode myhost" begin
+            w = oneworkerpernode(w_myhost)
+            @test length(w) == 1
+            @test (@fetchfrom w[1] Libc.gethostname()) == myhost
+
+            @test oneworkerpernode(WorkerPool(w)) == w
+        end
 
         @testset "workerpool_nodes myhost" begin
             pool = workerpool_nodes(WorkerPool(w_myhost))
@@ -712,15 +764,18 @@ end;
             w_pool = workers(pool)
             @test length(w_pool) == 1
             @test (@fetchfrom w_pool[1] Libc.gethostname()) == myhost
+
+            @test workers(workerpool_nodes(pool)) == workers(pool)
+            @test workers(workerpool_nodes(pool, CachingPool)) == workers(pool)
         end
 
-        @testset "workerpool_threadscoop myhost" begin
-            pool = workerpool_threadscoop(2, w_myhost)
+        @testset "workerpool_threadedfn myhost" begin
+            pool = workerpool_threadedfn(2, w_myhost)
             w_pool = workers(pool)
             @test length(w_pool) == max(1, length(w_myhost) ÷ 2)
             @test all([(@fetchfrom w Libc.gethostname()) for w in w_pool] .== myhost)
 
-            pool = workerpool_threadscoop(2, w_myhost, CachingPool)
+            pool = workerpool_threadedfn(2, w_myhost, CachingPool)
             @test pool isa CachingPool
             w_pool = workers(pool)
             @test length(w_pool) == max(1, length(w_myhost) ÷ 2)
@@ -735,10 +790,12 @@ end;
         @test w[1] in p[host_w]
     end
 
-    @testset "workerpool_threadscoop" begin
-        pool = workerpool_threadscoop(2)
+    @testset "workerpool_threadedfn" begin
+        pool = workerpool_threadedfn(2)
         w_pool = workers(pool)
         @test length(w_pool) == max(1, length(workers()) ÷ 2)
+
+        @test nworkers(workerpool_threadedfn(2, WorkerPool(workers()))) == nworkers(pool)
 
         pool = workerpool_nodes(CachingPool)
         @test pool isa CachingPool

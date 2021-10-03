@@ -12,7 +12,7 @@ export chooseworkers
 export maybetrimmedworkerpool
 export oneworkerpernode
 export workerpool_nodes
-export workerpool_threadscoop
+export workerpool_threadedfn
 export workerspernode
 export workerspernode_threadscoop
 export workers_myhost
@@ -175,7 +175,7 @@ workerspernode(n, pool::AbstractWorkerPool) = workerspernode(n, workers(pool))
 
 
 """
-    workerpool_threadscoop(nthreads::Integer, [pool::AbstractWorkerPool = WorkerPool(workers())], [T::Type{<:AbstractWorkerPool} = WorkerPool])
+    workerpool_threadedfn(nthreads::Integer, [pool::AbstractWorkerPool = WorkerPool(workers())], [T::Type{<:AbstractWorkerPool} = WorkerPool])
 
 Return an `AbstractWorkerPool` of type `T` with a subsample of workers from `workers(pool)` such that
 each worker on each machine/node of the cluster may spawn `nthreads` threads cooperatively with other
@@ -184,12 +184,12 @@ workers on that node.
 
 See also: [`workerspernode_threadscoop`](@ref)
 """
-workerpool_threadscoop(nthreads::Integer, w::AbstractVector{<:Integer}, T::Type{<:AbstractWorkerPool} = WorkerPool) =
+workerpool_threadedfn(nthreads::Integer, w::AbstractVector{<:Integer}, T::Type{<:AbstractWorkerPool} = WorkerPool) =
     T(workerspernode_threadscoop(nthreads, w))
-workerpool_threadscoop(nthreads::Integer, pool::AbstractWorkerPool, T::Type{<:AbstractWorkerPool} = typeof(pool)) =
-    workerpool_threadscoop(nthreads, workers(pool), T)
-workerpool_threadscoop(nthreads::Integer, T::Type{<:AbstractWorkerPool} = WorkerPool) =
-    workerpool_threadscoop(nthreads, workers(), T)
+workerpool_threadedfn(nthreads::Integer, pool::AbstractWorkerPool, T::Type{<:AbstractWorkerPool} = typeof(pool)) =
+    workerpool_threadedfn(nthreads, workers(pool), T)
+workerpool_threadedfn(nthreads::Integer, T::Type{<:AbstractWorkerPool} = WorkerPool) =
+    workerpool_threadedfn(nthreads, workers(), T)
 
 """
     workerspernode_threadscoop(nthreads::Integer, [workers::AbstractVector{<:Integer} = workers()])
@@ -200,7 +200,7 @@ may spawn `nthreads` threads cooperatively with other local workers.
 If the number of workers available is `nthreads × m` on a node then this returns `m`
 workers on that node.
 
-See also: [`workerpool_threadscoop`](@ref)
+See also: [`workerpool_threadedfn`](@ref)
 """
 function workerspernode_threadscoop(nthreads::Integer, workers::AbstractVector{<:Integer} = workers())
     workers_on_hosts = procs_node(workers)

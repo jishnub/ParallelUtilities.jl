@@ -128,12 +128,7 @@ parallel_threads(d, n, nthreads) = pmap_threadscoop(_ -> f(d, nthreads), nthread
 Finally we define a main function that calls the helper functions and measures the runtimes:
 
 ```julia
-function compare_with_serial()
-    # precompile
-    serial(1, 1)
-    parallel(1, 1)
-    parallel_threads(1, 1, 1)
-
+function pmap_with_threads()
     # time
     d = 2000 # size of the matrix is d × d
     n = nworkers() # number of matrices
@@ -156,25 +151,86 @@ end
 We run this script on a Slurm cluster across 2 nodes with 28 cores on each node. The results are:
 
 ```julia
-julia> ThreadsPmapTiming.compare_with_serial()
+julia> ThreadsPmapTiming.pmap_with_threads()
 Testing serial
- 40.568560 seconds (956 allocations: 3.377 GiB, 0.25% gc time)
+ 41.391285 seconds (956 allocations: 3.377 GiB, 0.60% gc time)
 Testing distributed
-  3.560556 seconds (5.01 k allocations: 222.859 KiB)
+  3.566095 seconds (3.46 k allocations: 138.875 KiB)
 Testing distributed + 2 threads
-  3.240148 seconds (9.41 k allocations: 417.156 KiB)
+  3.330016 seconds (10.50 k allocations: 475.625 KiB)
 Testing distributed + 4 threads
-  1.944696 seconds (8.75 k allocations: 386.984 KiB)
+  1.986760 seconds (10.41 k allocations: 466.516 KiB)
 Testing distributed + 7 threads
-  1.842619 seconds (8.45 k allocations: 367.219 KiB)
+  1.893500 seconds (10.37 k allocations: 456.234 KiB)
 Testing distributed + 14 threads
-  2.833750 seconds (8.26 k allocations: 360.484 KiB)
+  2.939750 seconds (10.34 k allocations: 455.719 KiB)
 Testing distributed + 28 threads
-  6.456497 seconds (8.16 k allocations: 350.188 KiB)
+  6.341226 seconds (10.33 k allocations: 456.734 KiB)
 Results match : true
+
 ```
 
 We see that the performance is optimal in this case using 4 to 7 threads per worker.
 In general it might require some tinkering to find the optimal combination of threads and workers.
+
+We may similarly carry out a `pmapreduce` with a threaded function:
+
+```julia
+g(d, nthreads) = begin
+    BLAS.set_num_threads(nthreads)
+    M = genmatrix(d)
+    eigvals(M)
+end
+
+serial_mapreduce(d, n) = mapreduce(_ -> g(d, 1), hcat, 1:n)
+parallel_mapreduce(d, n) = pmapreduce(_ -> g(d, 1), hcat, 1:n)
+parallel_threads_mapreduce(d, n, nthreads) =
+    pmapreduce_threadedfn(_ -> g(d, nthreads), nthreads, hcat, 1:n)
+```
+
+We define a function that times these:
+```julia
+function pmapreduce_with_threads()
+    # time
+    d = 2000 # size of the matrix is d × d
+    n = nworkers() # number of matrices
+
+    println("Testing serial_mapreduce")
+    A = @time serial_mapreduce(d, n);
+
+    println("Testing distributed mapreduce")
+    B = @time parallel_mapreduce(d, n);
+
+    C = map((2, 4, 7, 14, 28)) do nthreads
+        println("Testing distributed + $nthreads threads")
+        @time parallel_threads_mapreduce(d, n, nthreads);
+    end
+
+    println("Results match : ", all(==(A), [B, C...]))
+end
+```
+
+The results are:
+
+```julia
+julia> ThreadsPmapTiming.pmapreduce_with_threads()
+Testing serial_mapreduce
+ 41.410278 seconds (894 allocations: 3.401 GiB, 0.61% gc time)
+Testing distributed mapreduce
+  3.931968 seconds (21.20 k allocations: 1.713 MiB)
+Testing distributed + 2 threads
+  4.040329 seconds (16.87 k allocations: 1.587 MiB)
+Testing distributed + 4 threads
+  2.308510 seconds (12.38 k allocations: 1.402 MiB)
+Testing distributed + 7 threads
+  2.202479 seconds (10.42 k allocations: 1.325 MiB)
+Testing distributed + 14 threads
+  3.514926 seconds (9.14 k allocations: 1.270 MiB)
+Testing distributed + 28 threads
+  6.707958 seconds (8.54 k allocations: 1.243 MiB)
+Results match : true
+```
+
+As before, the performance is optimal using 4-7 threads.
 
 The full script may be found in the examples directory.
