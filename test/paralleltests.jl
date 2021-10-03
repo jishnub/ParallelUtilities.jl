@@ -6,6 +6,7 @@ using Distributed
     using Test
     using ParallelUtilities
     using ParallelUtilities.ClusterQueryUtils
+    using ParallelUtilities.ClusterQueryUtils: workerspernode_threadedfn, workerspernode
     using OffsetArrays
     import ParallelUtilities: BinaryTreeNode, BranchChannel,
     OrderedBinaryTree, SegmentedOrderedBinaryTree,
@@ -686,6 +687,11 @@ end
 
 @testset "threaded pmap/pmapreduce" begin
     r = 1:10
+    @testset "Threaded" begin
+        h = x -> x^2
+        @test Threaded(h)(2) == h(2)
+        @test Threaded(h, 2)(2) == h(2)
+    end
     @testset "test with non-threaded function" begin
         f = x -> x^2
         @testset "pmap" begin
@@ -738,6 +744,15 @@ end
         @test sort(workers_myhost(w_myhost)) == sort(w_myhost)
         @test sort(workers_myhost(WorkerPool(w_myhost))) == sort(w_myhost)
 
+        @testset "maybetrimmedworkerpool" begin
+            pooltrimmed = ClusterQueryUtils.maybetrimmedworkerpool(WorkerPool(w_myhost), length(w_myhost))
+            @test pooltrimmed isa WorkerPool
+            @test sort(workers(pooltrimmed)) == sort(w_myhost)
+            pooltrimmed = ClusterQueryUtils.maybetrimmedworkerpool(WorkerPool(w_myhost), 1)
+            @test pooltrimmed isa WorkerPool
+            @test length(workers(pooltrimmed)) == 1
+        end
+
         @testset "oneworkerpernode myhost" begin
             w = oneworkerpernode(w_myhost)
             @test length(w) == 1
@@ -781,6 +796,25 @@ end
             @test length(w_pool) == max(1, length(w_myhost) ÷ 2)
             @test all([(@fetchfrom w Libc.gethostname()) for w in w_pool] .== myhost)
         end
+    end
+
+    @testset "maybetrimmedworkerpool" begin
+        pool_trimmed = maybetrimmedworkerpool(WorkerPool(workers()), 1)
+        @test length(workers(pool_trimmed)) == 1
+        pool_trimmed = maybetrimmedworkerpool(WorkerPool(workers()), nworkers())
+        @test length(workers(pool_trimmed)) == nworkers()
+    end
+
+    @testset "workerspernode" begin
+        w = workerspernode(1, WorkerPool(workers()))
+        @test length(w) == length(p)
+        @test sort(hostnames(w)) == sort(collect(keys(p)))
+
+        w2 = workerspernode_threadedfn(1, WorkerPool(workers()))
+        @test sort(w2) == sort(workers())
+        w3 = workerspernode_threadedfn(maximum(maximum, values(p)), WorkerPool(workers()))
+        @test length(w3) == length(p)
+        @test sort(w3) == sort(w)
     end
 
     @testset "workerpool_nodes" begin

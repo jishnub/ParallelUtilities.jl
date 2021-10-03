@@ -95,7 +95,7 @@ We load the packages necessary, in this case these are `ParallelUtilities`, `Dis
 
 ```julia
 using ParallelUtilities
-using ParallelUtilities: pmap_threadscoop
+using ParallelUtilities: pmap_threadedfn, pmapreduce_threadedfn
 using Distributed
 @everywhere using LinearAlgebra
 ```

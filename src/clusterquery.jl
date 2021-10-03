@@ -14,7 +14,7 @@ export oneworkerpernode
 export workerpool_nodes
 export workerpool_threadedfn
 export workerspernode
-export workerspernode_threadscoop
+export workerspernode_threadedfn
 export workers_myhost
 export @everynode
 
@@ -182,18 +182,18 @@ each worker on each machine/node of the cluster may spawn `nthreads` threads coo
 local workers. If the number of workers available is `nthreads × m` on a node then this returns `m`
 workers on that node.
 
-See also: [`workerspernode_threadscoop`](@ref)
+See also: [`workerspernode_threadedfn`](@ref)
 """
 workerpool_threadedfn(nthreads::Integer, w::AbstractVector{<:Integer}, T::Type{<:AbstractWorkerPool} = WorkerPool) =
-    T(workerspernode_threadscoop(nthreads, w))
+    T(workerspernode_threadedfn(nthreads, w))
 workerpool_threadedfn(nthreads::Integer, pool::AbstractWorkerPool, T::Type{<:AbstractWorkerPool} = typeof(pool)) =
     workerpool_threadedfn(nthreads, workers(pool), T)
 workerpool_threadedfn(nthreads::Integer, T::Type{<:AbstractWorkerPool} = WorkerPool) =
     workerpool_threadedfn(nthreads, workers(), T)
 
 """
-    workerspernode_threadscoop(nthreads::Integer, [workers::AbstractVector{<:Integer} = workers()])
-    workerspernode_threadscoop(nthreads::Integer, pool::AbstractWorkerPool)
+    workerspernode_threadedfn(nthreads::Integer, [workers::AbstractVector{<:Integer} = workers()])
+    workerspernode_threadedfn(nthreads::Integer, pool::AbstractWorkerPool)
 
 Return a subsample of `workers` such that each workers on a machine/node of the cluster
 may spawn `nthreads` threads cooperatively with other local workers.
@@ -202,13 +202,13 @@ workers on that node.
 
 See also: [`workerpool_threadedfn`](@ref)
 """
-function workerspernode_threadscoop(nthreads::Integer, workers::AbstractVector{<:Integer} = workers())
+function workerspernode_threadedfn(nthreads::Integer, workers::AbstractVector{<:Integer} = workers())
     workers_on_hosts = procs_node(workers)
     nw_node = [max(1, length(v) ÷ nthreads) for v in values(workers_on_hosts)]
     workerspernode(nw_node, workers)
 end
-workerspernode_threadscoop(nthreads::Integer, pool::AbstractWorkerPool) =
-    workerspernode_nthreads(nthreads, workers(pool))
+workerspernode_threadedfn(nthreads::Integer, pool::AbstractWorkerPool) =
+    workerspernode_threadedfn(nthreads, workers(pool))
 
 """
     workers_myhost([workers::AbstractVector{<:Integer} = workers()])

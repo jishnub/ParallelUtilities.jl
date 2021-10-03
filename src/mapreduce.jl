@@ -370,11 +370,11 @@ end
 
 getf(t::Threaded) = t.f
 getf(f) = f
-Threaded(f) = Threaded(f, 1)
-Threaded(f::Threaded) = f
-Threaded(f::Threaded, n::Integer) = Threaded(getf(f), max(f.nthreads, n))
+Threaded(t) = Threaded(t, 1)
+Threaded(t::Threaded) = t
+Threaded(t::Threaded, n::Integer) = Threaded(getf(t), max(t.nthreads, n))
 
-(f::Threaded)(args...; kwargs...) = getf(f)(args...; kwargs...)
+(t::Threaded)(args...; kwargs...) = getf(t)(args...; kwargs...)
 
 ClusterQueryUtils.maybetrimmedworkerpool(pool::AbstractWorkerPool, t::Threaded) =
     t.nthreads == 1 ? pool : workerpool_threadedfn(t.nthreads, pool)
