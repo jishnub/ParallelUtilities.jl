@@ -3,33 +3,36 @@ module PMapReduceTiming
 using ParallelUtilities
 using Distributed
 
-function initialize(sleeptime)
-    A = Array{Int}(undef, 20, 20)
+function initialize(x, n)
+    inds = 1:n
+    d, r = divrem(length(inds), nworkers())
+    ninds_local = d + (x <= r)
+    A = zeros(Int, 50, ninds_local)
     for ind in eachindex(A)
-        sleep(sleeptime)
         A[ind] = ind
     end
     return A
 end
 
-function main_mapreduce(sleeptime)
-    mapreduce(x -> initialize(sleeptime), hcat, 1:20)
+function mapreduce_serial(n)
+    mapreduce(x -> initialize(x, n), hcat, 1:nworkers())
 end
 
-function main_pmapreduce(sleeptime)
-    pmapreduce(x -> initialize(sleeptime), hcat, 1:20)
+function mapreduce_parallel(n)
+    pmapreduce(x -> initialize(x, n), hcat, 1:nworkers())
 end
 
 function compare_with_serial()
     # precompile
-    main_mapreduce(0)
-    main_pmapreduce(0)
+    mapreduce_serial(1)
+    mapreduce_parallel(nworkers())
 
     # time
-    println("Tesing serial")
-    A = @time main_mapreduce(5e-6)
-    println("Tesing parallel")
-    B = @time main_pmapreduce(5e-6)
+    n = 2_000_000
+    println("Tesing serial mapreduce")
+    A = @time mapreduce_serial(n)
+    println("Tesing pmapreduce")
+    B = @time mapreduce_parallel(n)
 
     # check results
     println("Results match : ", A == B)

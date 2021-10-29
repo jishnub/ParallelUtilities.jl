@@ -13,7 +13,7 @@ We create a function to initailize the local part on each worker. In this case w
 
 ```julia
 function initializenode_threads(sleeptime)
-    s = zeros(Int, 2_000)
+    s = zeros(Int, 5_000)
     Threads.@threads for ind in eachindex(s)
         sleep(sleeptime)
         s[ind] = ind
@@ -22,37 +22,21 @@ function initializenode_threads(sleeptime)
 end
 ```
 
-We create a main function that runs on the calling process and launches the array initialization task on each node. This is run on a `WorkerPool` consisting of one worker per node which acts as the root process. We may obtain such a pool through the function `ParallelUtilities.workerpool_nodes()`. The array creation step on each node is followed by an eventual concatenation.
+We create a main function that runs on the calling process and launches the array initialization task on each node. The array creation step on each node is followed by an eventual concatenation.
 
 ```julia
-function main_threads(sleeptime)
-    # obtain the workerpool with one process on each node
-    pool = ParallelUtilities.workerpool_nodes()
-
-    # obtain the number of workers in the pool.
-    nw_nodes = nworkers(pool)
-
-    # Evaluate the parallel mapreduce
-    pmapreduce(x -> initializenode_threads(sleeptime), hcat, pool, 1:nw_nodes)
+function pmapreduce_threads(sleeptime)
+    pmapreduce(x -> initializenode_threads(sleeptime), hcat, 1:nworkers())
 end
 ```
 
-We compare the results with a serial execution that uses a similar workflow, except we use `mapreduce` instead of `pmapreduce` and do not use threads.
+We compare the results with
+* a `mapreduce` that uses a similar workflow, except the operation takes place entirely on one node
+* a `@distributed` mapreduce, where the evaluation is spread across nodes.
 
 ```julia
-function initialize_serial(sleeptime)
-    s = zeros(Int, 2_000)
-    for ind in eachindex(s)
-        sleep(sleeptime)
-        s[ind] = ind
-    end
-    return s
-end
-
-function main_serial(sleeptime)
-    pool = ParallelUtilities.workerpool_nodes()
-    nw_nodes = nworkers(pool)
-    mapreduce(x -> initialize_serial(sleeptime), hcat, 1:nw_nodes)
+function mapreduce_threads(sleeptime)
+    mapreduce(x -> initializenode_threads(sleeptime), hcat, 1:nworkers())
 end
 ```
 
@@ -61,28 +45,34 @@ We create a function to compare the performance of the two. We start with a prec
 ```julia
 function compare_with_serial()
     # precompile
-    main_serial(0)
-    main_threads(0)
-
+    mapreduce_threads(0)
+    mapreduce_distributed_threads(0)
+    pmapreduce_threads(0)
     # time
-    println("Testing serial")
-    A = @time main_serial(5e-3);
-    println("Testing threads")
-    B = @time main_threads(5e-3);
+    sleeptime = 1e-2
+    println("Testing threaded mapreduce")
+    A = @time mapreduce_threads(sleeptime);
+    println("Testing threaded+distributed mapreduce")
+    B = @time mapreduce_distributed_threads(sleeptime);
+    println("Testing threaded pmapreduce")
+    C = @time pmapreduce_threads(sleeptime);
 
-    println("Results match : ", A == B)
+    println("Results match : ", A == B == C)
 end
 ```
 
 We run this script on a Slurm cluster across 2 nodes with 28 cores on each node. The results are:
 
-```julia
-julia> compare_with_serial()
-Testing serial
- 24.601593 seconds (22.49 k allocations: 808.266 KiB)
-Testing threads
-  0.666256 seconds (3.71 k allocations: 201.703 KiB)
+```console
+Testing threaded mapreduce
+  4.161118 seconds (66.27 k allocations: 2.552 MiB, 0.95% compilation time)
+Testing threaded+distributed mapreduce
+  2.232924 seconds (48.64 k allocations: 2.745 MiB, 3.20% compilation time)
+Testing threaded pmapreduce
+  2.432104 seconds (6.79 k allocations: 463.788 KiB, 0.44% compilation time)
 Results match : true
 ```
 
-The full script may be found in the examples directory.
+We see that there is little difference in evaluation times between the `@distributed` reduction and `pmapreduce`, both of which are roughly doubly faster than the one-node evaluation.
+
+The full script along with the Slurm jobscript may be found in the examples directory.

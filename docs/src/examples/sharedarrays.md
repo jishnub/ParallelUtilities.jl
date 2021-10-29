@@ -12,7 +12,7 @@ using SharedArrays
 using Distributed
 ```
 
-We create a function to initailize the local part on each worker. In this case we simulate a heavy workload by adding a `sleep` period. In other words we assume that the individual elements of the array are expensive to evaluate. We obtain the local indices of the `SharedArray` through the function `localindices`.
+We create a function to initailize the local part on each worker. In this case we simulate a heavy workload by adding a `sleep` period. In other words we assume that the individual elements of the array are expensive to evaluate. We obtain the local indices of the `SharedArray` through the function `localindices` to split the load among workers.
 
 ```julia
 function initialize_localpart(s, sleeptime)
