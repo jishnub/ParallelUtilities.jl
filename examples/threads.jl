@@ -3,17 +3,8 @@ module ThreadsTiming
 using ParallelUtilities
 using Distributed
 
-function initialize_serial(sleeptime)
-    s = zeros(Int, 2_000)
-    for ind in eachindex(s)
-        sleep(sleeptime)
-        s[ind] = ind
-    end
-    return s
-end
-
 function initializenode_threads(sleeptime)
-    s = zeros(Int, 2_000)
+    s = zeros(Int, 5_000)
     Threads.@threads for ind in eachindex(s)
         sleep(sleeptime)
         s[ind] = ind
@@ -21,29 +12,35 @@ function initializenode_threads(sleeptime)
     return s
 end
 
-function main_threads(sleeptime)
-    workers_node_pool = ParallelUtilities.workerpool_nodes()
-    nw_nodes = nworkers(workers_node_pool)
-    pmapreduce(x -> initializenode_threads(sleeptime), hcat, workers_node_pool, 1:nw_nodes)
+function mapreduce_threads(sleeptime)
+    mapreduce(x -> initializenode_threads(sleeptime), hcat, 1:nworkers())
 end
 
-function main_serial(sleeptime)
-    workers_node_pool = ParallelUtilities.workerpool_nodes()
-    nw_nodes = nworkers(workers_node_pool)
-    mapreduce(x -> initialize_serial(sleeptime), hcat, 1:nw_nodes)
+function mapreduce_distributed_threads(sleeptime)
+    @distributed hcat for _ in 1:nworkers()
+        initializenode_threads(sleeptime)
+    end
+end
+
+function pmapreduce_threads(sleeptime)
+    pmapreduce(x -> initializenode_threads(sleeptime), hcat, 1:nworkers())
 end
 
 function compare_with_serial()
     # precompile
-    main_serial(0)
-    main_threads(0)
+    mapreduce_threads(0)
+    mapreduce_distributed_threads(0)
+    pmapreduce_threads(0)
     # time
-    println("Testing serial")
-    A = @time main_serial(5e-3);
-    println("Testing threads")
-    B = @time main_threads(5e-3);
+    sleeptime = 1e-2
+    println("Testing threaded mapreduce")
+    A = @time mapreduce_threads(sleeptime);
+    println("Testing threaded+distributed mapreduce")
+    B = @time mapreduce_distributed_threads(sleeptime);
+    println("Testing threaded pmapreduce")
+    C = @time pmapreduce_threads(sleeptime);
 
-    println("Results match : ", A == B)
+    println("Results match : ", A == B == C)
 end
 
 end
